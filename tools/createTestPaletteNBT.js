@@ -72,7 +72,7 @@ class Map_NBT_SpecialTest extends Map_NBT {
       [32, 33, 34, 51, 52, 53, 54, 55, 56, 57],
     ];
     this.mapColoursLayout = [];
-    for (let i = 0; i < 128; i++) {
+    for (let i = 0; i < 16; i++) {
       this.mapColoursLayout.push([]);
     }
     for (let rowNumber = 0; rowNumber < colourSetIdRows.length; rowNumber++) {
@@ -92,8 +92,8 @@ class Map_NBT_SpecialTest extends Map_NBT {
         }
       }
     }
-    for (let i = 0; i < 128; i++) {
-      for (let j = this.mapColoursLayout[i].length; j < 128; j++) {
+    for (let i = 0; i < 16; i++) {
+      for (let j = this.mapColoursLayout[i].length; j < 16; j++) {
         this.mapColoursLayout[i].push({
           colourSetId: "NOOBLINE_SCAFFOLD",
           tone: "normal",

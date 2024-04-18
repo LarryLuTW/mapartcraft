@@ -674,8 +674,8 @@ class Map_Mapdat {
             unlimitedTracking: { type: TagTypes.byte, value: 0 },
             trackingPosition: { type: TagTypes.byte, value: 0 },
             locked: { type: TagTypes.byte, value: 1 },
-            height: { type: TagTypes.short, value: 128 },
-            width: { type: TagTypes.short, value: 128 },
+            height: { type: TagTypes.short, value: 16 },
+            width: { type: TagTypes.short, value: 16 },
             xCenter: { type: TagTypes.int, value: 0 },
             zCenter: { type: TagTypes.int, value: 0 },
             colors: { type: TagTypes.byteArray, value: new Uint8Array(16384) },
@@ -687,10 +687,10 @@ class Map_Mapdat {
   }
 
   setNBT_json_colors() {
-    for (let x = 0; x < 128; x++) {
-      for (let z = 0; z < 128; z++) {
+    for (let x = 0; x < 16; x++) {
+      for (let z = 0; z < 16; z++) {
         const pixel = this.coloursLayout[x][z];
-        const arrayOffset = z * 128 + x;
+        const arrayOffset = z * 16 + x;
         let mapdatId; // coloursJSON contains the base mapdatId that is multiplied by 4 and added to by one of 0,1,2,3
         if (pixel.colourSetId === "-1") {
           // special colourSetId for transparent maps
@@ -722,7 +722,7 @@ class Map_Mapdat {
       }
       postMessage({
         head: progressReportHead,
-        body: (x + 1) / 128,
+        body: (x + 1) / 16,
       });
     }
   }
@@ -802,10 +802,10 @@ function setupColoursLayoutsFromPixelsData() {
   for (let whichMap_z = 0; whichMap_z < mapSize_z; whichMap_z++) {
     for (let whichMap_x = 0; whichMap_x < mapSize_x; whichMap_x++) {
       let coloursLayout = [];
-      for (let columnNumber = 0; columnNumber < 128; columnNumber++) {
+      for (let columnNumber = 0; columnNumber < 16; columnNumber++) {
         let coloursLayout_columnToPush = [];
-        for (let rowNumber = 0; rowNumber < 128; rowNumber++) {
-          const pixelsData_offset = 4 * (128 * mapSize_x * (128 * whichMap_z + rowNumber) + 128 * whichMap_x + columnNumber);
+        for (let rowNumber = 0; rowNumber < 16; rowNumber++) {
+          const pixelsData_offset = 4 * (16 * mapSize_x * (16 * whichMap_z + rowNumber) + 16 * whichMap_x + columnNumber);
           const colourSetIdAndTone = exactRGBToColourSetIdAndTone([
             pixelsData[pixelsData_offset],
             pixelsData[pixelsData_offset + 1],

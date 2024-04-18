@@ -22,8 +22,8 @@ var labCache = new Map();
 var maps = [];
 
 /*
-  'maps' is a matrix with entries accessable via maps[z][x], each of which corresponds to a 128x128 map. A typical entry is:
-  { materials: {}, supportBlockCount: 128 }
+  'maps' is a matrix with entries accessable via maps[z][x], each of which corresponds to a 16x16 map. A typical entry is:
+  { materials: {}, supportBlockCount: 16 }
   'materials' is a dictionary with keys corresponding to colourSetIds and entries being the number of blocks from this colourSet required to make the map.
 */
 
@@ -206,7 +206,7 @@ function getMapartImageDataAndMaterials() {
   if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
     maps.forEach((row) =>
       row.forEach((map) => {
-        map.supportBlockCount = 128; // initialise with noobline count
+        map.supportBlockCount = 16; // initialise with noobline count
       })
     );
   }
@@ -236,16 +236,16 @@ function getMapartImageDataAndMaterials() {
     const indexB = i + 2;
     const indexA = i + 3;
 
-    const multimapWidth = optionValue_mapSize_x * 128;
+    const multimapWidth = optionValue_mapSize_x * 16;
     const multimap_x = (i / 4) % multimapWidth;
     const multimap_y = (i / 4 - multimap_x) / multimapWidth;
-    const whichMap_x = Math.floor(multimap_x / 128);
-    const whichMap_y = Math.floor(multimap_y / 128);
-    const individualMap_y = multimap_y % 128;
+    const whichMap_x = Math.floor(multimap_x / 16);
+    const whichMap_y = Math.floor(multimap_y / 16);
+    const individualMap_y = multimap_y % 16;
     if (multimap_x === 0) {
       postMessage({
         head: "PROGRESS_REPORT",
-        body: multimap_y / (128 * optionValue_mapSize_y),
+        body: multimap_y / (16 * optionValue_mapSize_y),
       });
     }
 
@@ -428,7 +428,7 @@ function getMapartImageDataAndMaterials() {
               }
               case 1: {
                 // first block in column; special since noobline to the North
-                const coloursBlock0_index = i - 4 * 128 * optionValue_mapSize_x; //exactRGBToColourSetIdAndTone
+                const coloursBlock0_index = i - 4 * 16 * optionValue_mapSize_x; //exactRGBToColourSetIdAndTone
                 const coloursBlock0 = exactRGBToColourSetIdAndTone([
                   canvasImageData.data[coloursBlock0_index],
                   canvasImageData.data[coloursBlock0_index + 1],
@@ -456,7 +456,7 @@ function getMapartImageDataAndMaterials() {
                 // falls through
                 // special case 127 also accounts for final block in column since we are 1-cycle behind in out for-loop; no lookahead.
                 // falls through to default case to also account for block 126 as expected too
-                const penultimateColoursBlock_index = i - 4 * 128 * optionValue_mapSize_x;
+                const penultimateColoursBlock_index = i - 4 * 16 * optionValue_mapSize_x;
                 const penultimateColoursBlock = exactRGBToColourSetIdAndTone([
                   canvasImageData.data[penultimateColoursBlock_index],
                   canvasImageData.data[penultimateColoursBlock_index + 1],
@@ -481,13 +481,13 @@ function getMapartImageDataAndMaterials() {
               // eslint-disable-next-line no-fallthrough
               default: {
                 // average block in column
-                const coloursBlock_north_index = i - 4 * 128 * optionValue_mapSize_x * 2;
+                const coloursBlock_north_index = i - 4 * 16 * optionValue_mapSize_x * 2;
                 const coloursBlock_north = exactRGBToColourSetIdAndTone([
                   canvasImageData.data[coloursBlock_north_index],
                   canvasImageData.data[coloursBlock_north_index + 1],
                   canvasImageData.data[coloursBlock_north_index + 2],
                 ]);
-                const coloursBlock_index = i - 4 * 128 * optionValue_mapSize_x;
+                const coloursBlock_index = i - 4 * 16 * optionValue_mapSize_x;
                 const coloursBlock = exactRGBToColourSetIdAndTone([
                   canvasImageData.data[coloursBlock_index],
                   canvasImageData.data[coloursBlock_index + 1],
@@ -536,7 +536,7 @@ function getMapartImageDataAndMaterials() {
               // eslint-disable-next-line no-fallthrough
               default: {
                 maps[whichMap_y][whichMap_x].supportBlockCount += 1;
-                const coloursBlock_north_index = i - 4 * 128 * optionValue_mapSize_x;
+                const coloursBlock_north_index = i - 4 * 16 * optionValue_mapSize_x;
                 const coloursBlock_north = exactRGBToColourSetIdAndTone([
                   canvasImageData.data[coloursBlock_north_index],
                   canvasImageData.data[coloursBlock_north_index + 1],

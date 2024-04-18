@@ -356,28 +356,28 @@ class MapPreview extends Component {
             style={{
               backgroundImage: `url(${IMG_GridOverlay})`,
               display: optionValue_showGridOverlay ? "block" : "none",
-              width: `${(mapPreviewSizeScale * 128 * optionValue_mapSize_x).toString()}px`,
-              height: `${(mapPreviewSizeScale * 128 * optionValue_mapSize_y).toString()}px`,
-              backgroundSize: `${(mapPreviewSizeScale * 128).toString()}px`,
+              width: `${(mapPreviewSizeScale * 16 * optionValue_mapSize_x).toString()}px`,
+              height: `${(mapPreviewSizeScale * 16 * optionValue_mapSize_y).toString()}px`,
+              backgroundSize: `${(mapPreviewSizeScale * 16).toString()}px`,
             }}
           />
           <canvas
             className="mapCanvas"
-            width={128 * optionValue_mapSize_x}
-            height={128 * optionValue_mapSize_y}
+            width={16 * optionValue_mapSize_x}
+            height={16 * optionValue_mapSize_y}
             ref={this.canvasRef_display}
             style={{
-              width: `${(mapPreviewSizeScale * 128 * optionValue_mapSize_x).toString()}px`,
-              height: `${(mapPreviewSizeScale * 128 * optionValue_mapSize_y).toString()}px`,
+              width: `${(mapPreviewSizeScale * 16 * optionValue_mapSize_x).toString()}px`,
+              height: `${(mapPreviewSizeScale * 16 * optionValue_mapSize_y).toString()}px`,
             }}
             onClick={() => this.fileInputRef.current.click()}
           />
-          <canvas className="displayNone" width={128 * optionValue_mapSize_x} height={128 * optionValue_mapSize_y} ref={this.canvasRef_source}></canvas>
+          <canvas className="displayNone" width={16 * optionValue_mapSize_x} height={16 * optionValue_mapSize_y} ref={this.canvasRef_source}></canvas>
         </div>
         <div className="mapResolutionAndZoom">
           <div>
             <Tooltip tooltipText={getLocaleString("MAP-PREVIEW/BEST-RESOLUTION-TT")}>
-              <small>{`${(128 * optionValue_mapSize_x).toString()}x${(128 * optionValue_mapSize_y).toString()}`}</small>
+              <small>{`${(16 * optionValue_mapSize_x).toString()}x${(16 * optionValue_mapSize_y).toString()}`}</small>
             </Tooltip>{" "}
             <Tooltip tooltipText={getLocaleString("MAP-PREVIEW/ASPECT-RATIO-MISMATCH-TT")}>
               <small
