@@ -1,34 +1,33 @@
-var coloursJSON;
-var MapModes;
-var WhereSupportBlocksModes;
-var DitherMethods;
-var canvasImageData;
-var selectedBlocks;
-var optionValue_modeNBTOrMapdat;
-var optionValue_mapSize_x;
-var optionValue_mapSize_y;
-var optionValue_staircasing;
-var optionValue_whereSupportBlocks;
-var optionValue_transparency;
-var optionValue_transparencyTolerance;
-var optionValue_betterColour;
-var optionValue_dithering;
+// Removed worker-specific global variable declarations
+// var coloursJSON;
+// var MapModes;
+// var WhereSupportBlocksModes;
+// var DitherMethods;
+// var canvasImageData; // Will be passed as parameter
+// var selectedBlocks; // Will be passed as parameter
+// var optionValue_modeNBTOrMapdat; // Will be passed as parameter
+// var optionValue_mapSize_x; // Will be passed as parameter
+// var optionValue_mapSize_y; // Will be passed as parameter
+// var optionValue_staircasing; // Will be passed as parameter
+// var optionValue_whereSupportBlocks; // Will be passed as parameter
+// var optionValue_transparency; // Will be passed as parameter
+// var optionValue_transparencyTolerance; // Will be passed as parameter
+// var optionValue_betterColour; // Will be passed as parameter
+// var optionValue_dithering; // Will be passed as parameter
 
-var colourSetsToUse = []; // colourSetIds and shades to use in map
-var exactColourCache = new Map(); // for mapping RGB that exactly matches in coloursJSON to colourSetId and tone
-var colourCache = new Map(); // cache for reusing colours in identical pixels
-var labCache = new Map();
-
-var maps = [];
+// State variables that need to be managed per-call or passed in
+// var colourSetsToUse = [];
+// var exactColourCache = new Map();
+// var colourCache = new Map();
+// var labCache = new Map();
+// var maps = [];
 
 /*
-  'maps' is a matrix with entries accessable via maps[z][x], each of which corresponds to a 128x128 map. A typical entry is:
-  { materials: {}, supportBlockCount: 128 }
-  'materials' is a dictionary with keys corresponding to colourSetIds and entries being the number of blocks from this colourSet required to make the map.
+  'maps' is a matrix with entries accessable via maps[z][x], each of which corresponds to a 128x128 map (or 16x16 for NBT).
 */
 
 // rgb2lab conversion based on the one from redstonehelper's program
-function rgb2lab(rgb) {
+function rgb2lab(rgb, labCache) {
   let val = (rgb[0] << 16) + (rgb[1] << 8) + rgb[2];
   if (labCache.has(val)) return labCache.get(val);
 
@@ -51,11 +50,11 @@ function rgb2lab(rgb) {
   return rgb;
 }
 
-function squaredEuclideanMetricColours(pixel1, pixel2) {
+function squaredEuclideanMetricColours(pixel1, pixel2, optionValue_betterColour, labCache) {
   if (optionValue_betterColour) {
-    //return deltaE(rgb2lab(pixel1),rgb2lab(pixel2))
-    pixel1 = rgb2lab(pixel1);
-    pixel2 = rgb2lab(pixel2);
+    // Use passed labCache
+    pixel1 = rgb2lab(pixel1, labCache);
+    pixel2 = rgb2lab(pixel2, labCache);
   }
   const r = pixel1[0] - pixel2[0];
   const g = pixel1[1] - pixel2[1];
@@ -63,7 +62,7 @@ function squaredEuclideanMetricColours(pixel1, pixel2) {
   return r * r + g * g + b * b; // actually L*a*b* if optionValue_betterColour but metric is calculated the same
 }
 
-function findClosestColourSetIdAndToneAndRGBTo(pixelRGB) {
+function findClosestColourSetIdAndToneAndRGBTo(pixelRGB, colourSetsToUse, colourCache, optionValue_betterColour, labCache) {
   let RGBBinary = (pixelRGB[0] << 16) + (pixelRGB[1] << 8) + pixelRGB[2]; // injective mapping RGB to concatenated binaries
   if (colourCache.has(RGBBinary)) {
     return colourCache.get(RGBBinary);
@@ -74,7 +73,7 @@ function findClosestColourSetIdAndToneAndRGBTo(pixelRGB) {
     colourSetsToUse.forEach((colourSet) => {
       Object.keys(colourSet.tonesRGB).forEach((toneKey) => {
         const toneRGB = colourSet.tonesRGB[toneKey];
-        let squareDistance = squaredEuclideanMetricColours(toneRGB, pixelRGB);
+        let squareDistance = squaredEuclideanMetricColours(toneRGB, pixelRGB, optionValue_betterColour, labCache);
         if (squareDistance < shortestDistance) {
           shortestDistance = squareDistance;
           closestPixel = {
@@ -89,7 +88,7 @@ function findClosestColourSetIdAndToneAndRGBTo(pixelRGB) {
   }
 }
 
-function findClosest2ColourSetIdAndToneAndRGBTo(pixelRGB) {
+function findClosest2ColourSetIdAndToneAndRGBTo(pixelRGB, colourSetsToUse, colourCache, optionValue_betterColour, labCache, coloursJSON) {
   let RGBBinary = (pixelRGB[0] << 16) + (pixelRGB[1] << 8) + pixelRGB[2];
   if (colourCache.has(RGBBinary)) {
     return colourCache.get(RGBBinary);
@@ -102,7 +101,7 @@ function findClosest2ColourSetIdAndToneAndRGBTo(pixelRGB) {
     colourSetsToUse.forEach((colourSet) => {
       Object.keys(colourSet.tonesRGB).forEach((toneKey) => {
         const toneRGB = colourSet.tonesRGB[toneKey];
-        let squareDistance = squaredEuclideanMetricColours(toneRGB, pixelRGB);
+        let squareDistance = squaredEuclideanMetricColours(toneRGB, pixelRGB, optionValue_betterColour, labCache);
         if (squareDistance < shortestDistance1) {
           shortestDistance1 = squareDistance;
           closestPixel1 = {
@@ -110,7 +109,7 @@ function findClosest2ColourSetIdAndToneAndRGBTo(pixelRGB) {
             tone: toneKey,
           };
         }
-        if (squareDistance < shortestDistance2 && colourSetIdAndToneToRGB(closestPixel1.colourSetId, closestPixel1.tone) !== toneRGB) {
+        if (squareDistance < shortestDistance2 && colourSetIdAndToneToRGB(closestPixel1.colourSetId, closestPixel1.tone, coloursJSON) !== toneRGB) {
           shortestDistance2 = squareDistance;
           closestPixel2 = {
             colourSetId: colourSet.colourSetId,
@@ -122,8 +121,10 @@ function findClosest2ColourSetIdAndToneAndRGBTo(pixelRGB) {
     if (
       shortestDistance2 !== 9999999 && // to make sure closestPixel2.colourSetId/tone is not null
       squaredEuclideanMetricColours(
-        colourSetIdAndToneToRGB(closestPixel1.colourSetId, closestPixel1.tone),
-        colourSetIdAndToneToRGB(closestPixel2.colourSetId, closestPixel2.tone)
+        colourSetIdAndToneToRGB(closestPixel1.colourSetId, closestPixel1.tone, coloursJSON),
+        colourSetIdAndToneToRGB(closestPixel2.colourSetId, closestPixel2.tone, coloursJSON),
+        optionValue_betterColour,
+        labCache
       ) <= shortestDistance2
     ) {
       closestPixel2 = closestPixel1; // if closestPixel1 is a better fit to closestPixel2 than closestPixel2 is to the actual pixel
@@ -134,7 +135,8 @@ function findClosest2ColourSetIdAndToneAndRGBTo(pixelRGB) {
   }
 }
 
-function setupColourSetsToUse() {
+function setupColourSetsToUse(selectedBlocks, MapModes, optionValue_modeNBTOrMapdat, optionValue_staircasing, coloursJSON) {
+  let colourSetsToUse = []; // Initialize locally
   let colourSetIdsToUse = []; // get selected colour sets
   Object.keys(selectedBlocks).forEach((key) => {
     if (selectedBlocks[key] !== "-1") {
@@ -157,9 +159,11 @@ function setupColourSetsToUse() {
       tonesRGB: tonesRGB,
     });
   }
+  return colourSetsToUse; // Return the generated list
 }
 
-function setupExactColourCache() {
+function setupExactColourCache(coloursJSON) {
+  const exactColourCache = new Map(); // Initialize locally
   // we do not care what staircasing option is selected etc as this does not matter
   // this is for exactly matching colours, whose values are never repeated in coloursJSON
   for (const [colourSetId, colourSet] of Object.entries(coloursJSON)) {
@@ -171,468 +175,234 @@ function setupExactColourCache() {
       });
     }
   }
+  return exactColourCache; // Return the generated cache
 }
 
-function exactRGBToColourSetIdAndTone(pixelRGB) {
+function exactRGBToColourSetIdAndTone(pixelRGB, exactColourCache) {
   const RGBBinary = (pixelRGB[0] << 16) + (pixelRGB[1] << 8) + pixelRGB[2];
   return exactColourCache.get(RGBBinary);
 }
 
-function isSupportBlockMandatoryForColourSetIdAndTone(colourSetIdAndTone) {
-  return coloursJSON[colourSetIdAndTone.colourSetId].blocks[selectedBlocks[colourSetIdAndTone.colourSetId]].supportBlockMandatory;
-}
-
-function colourSetIdAndToneToRGB(colourSetId, tone) {
+function colourSetIdAndToneToRGB(colourSetId, tone, coloursJSON) {
+  // Handle potential null/undefined colourSetId or tone gracefully
+  if (!colourSetId || !tone || !coloursJSON[colourSetId] || !coloursJSON[colourSetId]["tonesRGB"] || !coloursJSON[colourSetId]["tonesRGB"][tone]) {
+      // console.warn(`Could not find RGB for colourSetId: ${colourSetId}, tone: ${tone}`);
+      return [0, 0, 0]; // Return black or some default if lookup fails
+  }
   return coloursJSON[colourSetId]["tonesRGB"][tone];
 }
 
-function getMapartImageDataAndMaterials() {
-  // --- BEGIN MAPS INIT ADJUSTMENT ---
-  maps = []; // Reset maps array
+// Main exported function
+function processImageData(imageData, width, height, options) {
+  // Destructure options for clarity
+  const {
+    coloursJSON,
+    MapModes,
+    WhereSupportBlocksModes, // Needed? Maybe not directly here
+    DitherMethods,
+    selectedBlocks,
+    optionValue_modeNBTOrMapdat,
+    // optionValue_mapSize_x, // These are implicit in the 16x16 input for NBT
+    // optionValue_mapSize_y,
+    optionValue_staircasing,
+    // optionValue_whereSupportBlocks, // Used in nbt.js
+    optionValue_transparency, // Needed for mapdat only
+    optionValue_transparencyTolerance, // Needed for mapdat only
+    optionValue_betterColour,
+    optionValue_dithering
+  } = options;
+
+  // Initialize state for this call
+  const labCache = new Map();
+  const colourCache = new Map(); // For findClosest...
+  const exactColourCache = setupExactColourCache(coloursJSON);
+  const colourSetsToUse = setupColourSetsToUse(selectedBlocks, MapModes, optionValue_modeNBTOrMapdat, optionValue_staircasing, coloursJSON);
+
+  let maps = []; // Will hold the output structure for Map_NBT
+
+  // Input imageData is expected to be a flat RGBA buffer (e.g., from sharp)
+  // Input width and height are expected to be 16x16 for NBT mode
+
+  // --- MAPS INIT --- (Simplified for NBT, assuming 1x1 map structure)
   if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
-    // If NBT, it's always 1x1 after resize
-    let mapEntryToAdd = { materials: {}, supportBlockCount: 0 };
+    let mapEntryToAdd = { materials: {}, supportBlockCount: 0 }; // supportBlockCount might not be used by NBT side
     colourSetsToUse.forEach((colourSet) => {
       mapEntryToAdd.materials[colourSet.colourSetId] = 0;
     });
-    maps.push([mapEntryToAdd]); // Single 1x1 map
+    maps.push([mapEntryToAdd]); // Single 1x1 map structure
   } else {
-    // Original logic for mapdat (multiple 128x128)
-    for (let y = 0; y < optionValue_mapSize_y; y++) {
-      let mapsRowToAdd = [];
-      for (let x = 0; x < optionValue_mapSize_x; x++) {
-        let mapEntryToAdd = { materials: {}, supportBlockCount: 0 };
-        colourSetsToUse.forEach((colourSet) => {
-          mapEntryToAdd.materials[colourSet.colourSetId] = 0;
-        });
-        mapsRowToAdd.push(mapEntryToAdd);
-      }
-      maps.push(mapsRowToAdd);
-    }
+    // Add mapdat init logic here if needed for CLI mapdat generation later
+    console.error("Mapdat generation not yet fully supported in CLI mode.");
+    return null; // Or handle mapdat initialization
   }
-  // --- END MAPS INIT ADJUSTMENT ---
+  // --- END MAPS INIT ---
 
   if (colourSetsToUse.length === 0) {
-    return;
+    console.warn("No block colours available based on selection. Cannot process image.");
+    return { processedPixels: imageData, maps: maps }; // Return empty/original data
   }
 
-  // --- BEGIN RESIZE LOGIC ---
-  // Only resize if generating NBT schematic, mapdat requires 128x128
-  if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
-    const originalWidth = canvasImageData.width;
-    const originalHeight = canvasImageData.height;
-    const targetWidth = 16;
-    const targetHeight = 16;
+  // --- REMOVED RESIZE LOGIC --- Resizing (to 16x16 for NBT) should happen *before* calling this function.
+  // The input `imageData`, `width`, `height` should already be 16x16.
 
-    // Create a temporary canvas to draw the original image data
-    const tempCanvas = new OffscreenCanvas(originalWidth, originalHeight);
-    const tempCtx = tempCanvas.getContext("2d");
-    tempCtx.putImageData(canvasImageData, 0, 0);
-
-    // Create the target canvas
-    const resizedCanvas = new OffscreenCanvas(targetWidth, targetHeight);
-    const resizedCtx = resizedCanvas.getContext("2d");
-
-    // Disable image smoothing for nearest-neighbor scaling
-    resizedCtx.imageSmoothingEnabled = false;
-
-    // Draw the original canvas onto the target canvas, resizing it
-    resizedCtx.drawImage(tempCanvas, 0, 0, originalWidth, originalHeight, 0, 0, targetWidth, targetHeight);
-
-    // Get the resized image data
-    canvasImageData = resizedCtx.getImageData(0, 0, targetWidth, targetHeight);
-
-    // Adjust map size options internally for subsequent logic
-    optionValue_mapSize_x = 1;
-    optionValue_mapSize_y = 1;
-
-  }
-  // --- END RESIZE LOGIC ---
-
-  if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
-    // Adjust initial support block count for 16x16 NBT
-    maps[0][0].supportBlockCount = 16; // Noobline for 16 wide
-  } else {
-    // Original logic for mapdat
-    maps.forEach((row) =>
-      row.forEach((map) => {
-        map.supportBlockCount = 128; // initialise with noobline count
-      })
-    );
+  if (optionValue_modeNBTOrMapdat !== MapModes.SCHEMATIC_NBT.uniqueId) {
+     console.error("Only NBT Schematic generation (16x16) is currently supported.");
+     return null;
   }
 
+  // --- IMAGE PROCESSING LOOP ---
+  // Create a new buffer for the output pixels (where colors match Minecraft blocks)
+  const outputPixelData = Buffer.alloc(imageData.length);
+  imageData.copy(outputPixelData); // Start with a copy
+
+  // Dithering setup
   let ditherMatrix;
   let divisor;
   const chosenDitherMethod =
-    DitherMethods[Object.keys(DitherMethods).find((ditherMethodKey) => DitherMethods[ditherMethodKey].uniqueId === optionValue_dithering)];
+    Object.values(DitherMethods).find((ditherMethod) => ditherMethod.uniqueId === optionValue_dithering);
+
+  if (!chosenDitherMethod) {
+      console.warn(`Unknown dithering method ID: ${optionValue_dithering}. Defaulting to None.`);
+      chosenDitherMethod = DitherMethods.None;
+  }
+
   if (chosenDitherMethod.uniqueId !== DitherMethods.None.uniqueId) {
     ditherMatrix = chosenDitherMethod.ditherMatrix;
   }
   if (
-    [
-      DitherMethods.FloydSteinberg.uniqueId,
-      DitherMethods.MinAvgErr.uniqueId,
-      DitherMethods.Burkes.uniqueId,
-      DitherMethods.SierraLite.uniqueId,
-      DitherMethods.Stucki.uniqueId,
-      DitherMethods.Atkinson.uniqueId,
-    ].includes(chosenDitherMethod.uniqueId)
+    chosenDitherMethod.ditherDivisor // Check if divisor exists
   ) {
     divisor = chosenDitherMethod.ditherDivisor;
   }
-  for (let i = 0; i < canvasImageData.data.length; i += 4) {
-    const indexR = i;
-    const indexG = i + 1;
-    const indexB = i + 2;
-    const indexA = i + 3;
 
-    // --- BEGIN INDEXING ADJUSTMENT ---
-    let multimapWidth;
-    let mapWidth;
-    if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
-      multimapWidth = 16; // Always 16 for NBT
-      mapWidth = 16;
-    } else {
-      multimapWidth = optionValue_mapSize_x * 128; // Original logic for mapdat
-      mapWidth = 128;
+  const errorDiffusionMatrix = new Array(height).fill(0).map(() => new Array(width).fill(0).map(() => [0, 0, 0]));
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+        const index = (y * width + x) * 4;
+        const indexR = index;
+        const indexG = index + 1;
+        const indexB = index + 2;
+        const indexA = index + 3; // Alpha channel
+
+        // For NBT, we ignore transparency options from the UI.
+        // Assume fully opaque input or treat transparent as black/a default?
+        // For now, process RGB directly.
+        // TODO: Decide how to handle input alpha for NBT. Map to air? Choose closest non-air?
+
+        let oldPixel = [
+            imageData[indexR],
+            imageData[indexG],
+            imageData[indexB],
+        ];
+
+        // Apply error diffusion from neighbours
+        if (chosenDitherMethod.ditherDivisor) { // Only apply if error diffusion type
+             oldPixel[0] = Math.max(0, Math.min(255, oldPixel[0] + errorDiffusionMatrix[y][x][0]));
+             oldPixel[1] = Math.max(0, Math.min(255, oldPixel[1] + errorDiffusionMatrix[y][x][1]));
+             oldPixel[2] = Math.max(0, Math.min(255, oldPixel[2] + errorDiffusionMatrix[y][x][2]));
+        }
+
+
+        let closestColourSetIdAndTone;
+
+        switch (chosenDitherMethod.uniqueId) {
+          case DitherMethods.None.uniqueId: {
+            closestColourSetIdAndTone = findClosestColourSetIdAndToneAndRGBTo(oldPixel, colourSetsToUse, colourCache, optionValue_betterColour, labCache);
+            break;
+          }
+          case DitherMethods.Bayer44.uniqueId:
+          case DitherMethods.Bayer22.uniqueId:
+          case DitherMethods.Ordered33.uniqueId: {
+            const newPixels = findClosest2ColourSetIdAndToneAndRGBTo(oldPixel, colourSetsToUse, colourCache, optionValue_betterColour, labCache, coloursJSON);
+            // newPixels = [shortestDistance1, shortestDistance2, newPixel1, newPixel2]
+            if (newPixels[1] === 0 || newPixels[0] === Infinity || newPixels[1] === Infinity) { // Avoid division by zero or using Infinity
+                 closestColourSetIdAndTone = newPixels[2]; // Default to the absolute closest
+            } else if (
+              (newPixels[0] * (ditherMatrix[0].length * ditherMatrix.length + 1)) / newPixels[1] >
+              ditherMatrix[x % ditherMatrix[0].length][y % ditherMatrix.length] // Use x, y for matrix lookup
+            ) {
+              closestColourSetIdAndTone = newPixels[3];
+            } else {
+              closestColourSetIdAndTone = newPixels[2];
+            }
+            break;
+          }
+          // Error diffusion algorithms
+          default: { // Handles FloydSteinberg, MinAvgErr, Burkes, etc.
+             if (!chosenDitherMethod.ditherDivisor || !chosenDitherMethod.ditherMatrix) {
+                 // Fallback to None if matrix/divisor missing for error diffusion type
+                 console.warn(`Dithering config missing for ${chosenDitherMethod.uniqueId}. Using None.`);
+                 closestColourSetIdAndTone = findClosestColourSetIdAndToneAndRGBTo(oldPixel, colourSetsToUse, colourCache, optionValue_betterColour, labCache);
+             } else {
+                 closestColourSetIdAndTone = findClosestColourSetIdAndToneAndRGBTo(oldPixel, colourSetsToUse, colourCache, optionValue_betterColour, labCache);
+                 const newPixel = colourSetIdAndToneToRGB(closestColourSetIdAndTone.colourSetId, closestColourSetIdAndTone.tone, coloursJSON);
+                 const quantError = [
+                     oldPixel[0] - newPixel[0],
+                     oldPixel[1] - newPixel[1],
+                     oldPixel[2] - newPixel[2],
+                 ];
+
+                 // Distribute error
+                 for (let dmY = 0; dmY < ditherMatrix.length; dmY++) {
+                     for (let dmX = 0; dmX < ditherMatrix[dmY].length; dmX++) {
+                          const offset = chosenDitherMethod.matrixOffset || [0, 0]; // Assume offset [0,0] if not defined
+                          const neighbourX = x + dmX - offset[0];
+                          const neighbourY = y + dmY - offset[1];
+
+                          if (neighbourX >= 0 && neighbourX < width && neighbourY >= 0 && neighbourY < height && ditherMatrix[dmY][dmX] !== 0) {
+                               const errorFactor = ditherMatrix[dmY][dmX] / divisor;
+                               errorDiffusionMatrix[neighbourY][neighbourX][0] += quantError[0] * errorFactor;
+                               errorDiffusionMatrix[neighbourY][neighbourX][1] += quantError[1] * errorFactor;
+                               errorDiffusionMatrix[neighbourY][neighbourX][2] += quantError[2] * errorFactor;
+                          }
+                     }
+                 }
+             }
+             break;
+          }
+        }
+
+        // Ensure we got a valid colour/tone
+        if (!closestColourSetIdAndTone || !closestColourSetIdAndTone.colourSetId) {
+             console.warn(`Could not determine closest colour for pixel at (${x}, ${y}). Setting to black.`);
+             outputPixelData[indexR] = 0;
+             outputPixelData[indexG] = 0;
+             outputPixelData[indexB] = 0;
+             outputPixelData[indexA] = 255; // Keep opaque
+        } else {
+             const closestColourRGB = colourSetIdAndToneToRGB(closestColourSetIdAndTone.colourSetId, closestColourSetIdAndTone.tone, coloursJSON);
+
+             // Update the output buffer with the chosen Minecraft block colour
+             outputPixelData[indexR] = closestColourRGB[0];
+             outputPixelData[indexG] = closestColourRGB[1];
+             outputPixelData[indexB] = closestColourRGB[2];
+             outputPixelData[indexA] = 255; // Keep opaque
+
+             // Update materials count for the map (assuming only one map for NBT)
+             if (maps[0] && maps[0][0] && maps[0][0].materials.hasOwnProperty(closestColourSetIdAndTone.colourSetId)) {
+                 maps[0][0].materials[closestColourSetIdAndTone.colourSetId]++;
+             }
+        }
     }
-
-    const multimap_x = (i / 4) % multimapWidth;
-    const multimap_y = Math.floor((i / 4) / multimapWidth);
-    const whichMap_x = Math.floor(multimap_x / mapWidth);
-    const whichMap_y = Math.floor(multimap_y / mapWidth);
-    const individualMap_x = multimap_x % mapWidth; // Need this for Bayer dithering etc.
-    const individualMap_y = multimap_y % mapWidth;
-    // --- END INDEXING ADJUSTMENT ---
-
-    if (multimap_x === 0) {
-      postMessage({
-        head: "PROGRESS_REPORT",
-        body: multimap_y / (mapWidth * optionValue_mapSize_y), // Use mapWidth here
-      });
-    }
-
-    let closestColourSetIdAndTone;
-    if (
-      optionValue_modeNBTOrMapdat === MapModes.MAPDAT.uniqueId &&
-      optionValue_transparency &&
-      canvasImageData.data[indexA] < optionValue_transparencyTolerance
-    ) {
-      // we specially reserve 0,0,0,0 for transparent in mapdats
-      canvasImageData.data[indexR] = 0;
-      canvasImageData.data[indexG] = 0;
-      canvasImageData.data[indexB] = 0;
-      canvasImageData.data[indexA] = 0;
-    } else {
-      canvasImageData.data[indexA] = 255; // full opacity
-      const oldPixel = [canvasImageData.data[indexR], canvasImageData.data[indexG], canvasImageData.data[indexB]];
-      switch (chosenDitherMethod.uniqueId) {
-        // Switch statement that checks the dither method every pixel;
-        // I have tested a refactor that only checks once however the time difference is negligible and code quality deteriorates
-        case DitherMethods.None.uniqueId: {
-          closestColourSetIdAndTone = findClosestColourSetIdAndToneAndRGBTo(oldPixel);
-          const closestColour = colourSetIdAndToneToRGB(closestColourSetIdAndTone.colourSetId, closestColourSetIdAndTone.tone);
-          canvasImageData.data[indexR] = closestColour[0];
-          canvasImageData.data[indexG] = closestColour[1];
-          canvasImageData.data[indexB] = closestColour[2];
-          break;
-        }
-        case DitherMethods.Bayer44.uniqueId:
-        case DitherMethods.Bayer22.uniqueId:
-        case DitherMethods.Ordered33.uniqueId: {
-          const newPixels = findClosest2ColourSetIdAndToneAndRGBTo(oldPixel);
-          // newPixels = [shortestDistance1, shortestDistance2, newPixel1, newPixel2]
-          if (
-            (newPixels[0] * (ditherMatrix[0].length * ditherMatrix.length + 1)) / newPixels[1] >
-            ditherMatrix[individualMap_x % ditherMatrix[0].length][individualMap_y % ditherMatrix.length]
-          ) {
-            closestColourSetIdAndTone = newPixels[3];
-          } else {
-            closestColourSetIdAndTone = newPixels[2];
-          }
-          const closestColour = colourSetIdAndToneToRGB(closestColourSetIdAndTone.colourSetId, closestColourSetIdAndTone.tone);
-          canvasImageData.data[indexR] = closestColour[0];
-          canvasImageData.data[indexG] = closestColour[1];
-          canvasImageData.data[indexB] = closestColour[2];
-          break;
-        }
-        //Error diffusion algorithms
-        case DitherMethods.FloydSteinberg.uniqueId:
-        case DitherMethods.MinAvgErr.uniqueId:
-        case DitherMethods.Burkes.uniqueId:
-        case DitherMethods.SierraLite.uniqueId:
-        case DitherMethods.Stucki.uniqueId:
-        case DitherMethods.Atkinson.uniqueId: {
-          closestColourSetIdAndTone = findClosestColourSetIdAndToneAndRGBTo(oldPixel);
-          const closestColour = colourSetIdAndToneToRGB(closestColourSetIdAndTone.colourSetId, closestColourSetIdAndTone.tone);
-          canvasImageData.data[indexR] = closestColour[0];
-          canvasImageData.data[indexG] = closestColour[1];
-          canvasImageData.data[indexB] = closestColour[2];
-          const quant_error = [oldPixel[0] - closestColour[0], oldPixel[1] - closestColour[1], oldPixel[2] - closestColour[2]];
-
-          try {
-            // ditherMatrix [0][0...2] should always be zero, and can thus be skipped
-            if (multimap_x + 1 < multimapWidth) {
-              // Make sure to not carry over error from one side to the other
-              const weight = ditherMatrix[0][3] / divisor; // 1 right
-              canvasImageData.data[i + 4] += quant_error[0] * weight;
-              canvasImageData.data[i + 5] += quant_error[1] * weight;
-              canvasImageData.data[i + 6] += quant_error[2] * weight;
-              if (multimap_x + 2 < multimapWidth) {
-                const weight = ditherMatrix[0][4] / divisor; // 2 right
-                canvasImageData.data[i + 8] += quant_error[0] * weight;
-                canvasImageData.data[i + 9] += quant_error[1] * weight;
-                canvasImageData.data[i + 10] += quant_error[2] * weight;
-              }
-            }
-
-            // First row below
-            if (multimap_x > 0) {
-              // Order reversed, to allow nesting of 'if' blocks
-              const weight = ditherMatrix[1][1] / divisor; // 1 down, 1 left
-              canvasImageData.data[i + multimapWidth * 4 - 4] += quant_error[0] * weight;
-              canvasImageData.data[i + multimapWidth * 4 - 3] += quant_error[1] * weight;
-              canvasImageData.data[i + multimapWidth * 4 - 2] += quant_error[2] * weight;
-              if (multimap_x > 1) {
-                const weight = ditherMatrix[1][0] / divisor; // 1 down, 2 left
-                canvasImageData.data[i + multimapWidth * 4 - 8] += quant_error[0] * weight;
-                canvasImageData.data[i + multimapWidth * 4 - 7] += quant_error[1] * weight;
-                canvasImageData.data[i + multimapWidth * 4 - 6] += quant_error[2] * weight;
-              }
-            }
-            let weight = ditherMatrix[1][2] / divisor; // 1 down
-            canvasImageData.data[i + multimapWidth * 4 + 0] += quant_error[0] * weight;
-            canvasImageData.data[i + multimapWidth * 4 + 1] += quant_error[1] * weight;
-            canvasImageData.data[i + multimapWidth * 4 + 2] += quant_error[2] * weight;
-            if (multimap_x + 1 < multimapWidth) {
-              const weight = ditherMatrix[1][3] / divisor; // 1 down, 1 right
-              canvasImageData.data[i + multimapWidth * 4 + 4] += quant_error[0] * weight;
-              canvasImageData.data[i + multimapWidth * 4 + 5] += quant_error[1] * weight;
-              canvasImageData.data[i + multimapWidth * 4 + 6] += quant_error[2] * weight;
-              if (multimap_x + 2 < multimapWidth) {
-                const weight = ditherMatrix[1][4] / divisor; // 1 down, 2 right
-                canvasImageData.data[i + multimapWidth * 4 + 8] += quant_error[0] * weight;
-                canvasImageData.data[i + multimapWidth * 4 + 9] += quant_error[1] * weight;
-                canvasImageData.data[i + multimapWidth * 4 + 10] += quant_error[2] * weight;
-              }
-            }
-
-            // Second row below
-            if (multimap_x > 0) {
-              const weight = ditherMatrix[2][1] / divisor; // 2 down, 1 left
-              canvasImageData.data[i + multimapWidth * 8 - 4] += quant_error[0] * weight;
-              canvasImageData.data[i + multimapWidth * 8 - 3] += quant_error[1] * weight;
-              canvasImageData.data[i + multimapWidth * 8 - 2] += quant_error[2] * weight;
-              if (multimap_x > 1) {
-                const weight = ditherMatrix[2][0] / divisor; // 2 down, 2 left
-                canvasImageData.data[i + multimapWidth * 8 - 8] += quant_error[0] * weight;
-                canvasImageData.data[i + multimapWidth * 8 - 7] += quant_error[1] * weight;
-                canvasImageData.data[i + multimapWidth * 8 - 6] += quant_error[2] * weight;
-              }
-            }
-            weight = ditherMatrix[2][2] / divisor; // 2 down
-            canvasImageData.data[i + multimapWidth * 8 + 0] += quant_error[0] * weight;
-            canvasImageData.data[i + multimapWidth * 8 + 1] += quant_error[1] * weight;
-            canvasImageData.data[i + multimapWidth * 8 + 2] += quant_error[2] * weight;
-            if (multimap_x + 1 < multimapWidth) {
-              const weight = ditherMatrix[2][3] / divisor; // 2 down, 1 right
-              canvasImageData.data[i + multimapWidth * 8 + 4] += quant_error[0] * weight;
-              canvasImageData.data[i + multimapWidth * 8 + 5] += quant_error[1] * weight;
-              canvasImageData.data[i + multimapWidth * 8 + 6] += quant_error[2] * weight;
-              if (multimap_x + 2 < multimapWidth) {
-                const weight = ditherMatrix[2][4] / divisor; // 2 down, 2 right
-                canvasImageData.data[i + multimapWidth * 8 + 8] += quant_error[0] * weight;
-                canvasImageData.data[i + multimapWidth * 8 + 9] += quant_error[1] * weight;
-                canvasImageData.data[i + multimapWidth * 8 + 10] += quant_error[2] * weight;
-              }
-            }
-          } catch (e) {
-            console.log(e); // ???
-          }
-          break;
-        }
-        default:
-          break;
-      }
-
-      // support-block count: mapdat can skip this
-      if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
-        switch (optionValue_whereSupportBlocks) {
-          case WhereSupportBlocksModes.NONE.uniqueId: {
-            break;
-          }
-          case WhereSupportBlocksModes.IMPORTANT.uniqueId: {
-            if (isSupportBlockMandatoryForColourSetIdAndTone(closestColourSetIdAndTone)) {
-              maps[0][0].supportBlockCount += 1; // Always maps[0][0] for NBT
-            }
-            break;
-          }
-          case WhereSupportBlocksModes.ALL_OPTIMIZED.uniqueId: {
-            switch (individualMap_y) { // Use individualMap_y
-              case 0: {
-                if (
-                  closestColourSetIdAndTone.tone === "dark" ||
-                  (closestColourSetIdAndTone.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(closestColourSetIdAndTone))
-                ) {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                if (
-                  closestColourSetIdAndTone.tone === "dark" &&
-                  isSupportBlockMandatoryForColourSetIdAndTone(closestColourSetIdAndTone)
-                ) {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                break;
-              }
-              case 1: {
-                const coloursBlock0_index = i - 4 * mapWidth; // Use mapWidth (16 for NBT)
-                const coloursBlock0 = exactRGBToColourSetIdAndTone([
-                  canvasImageData.data[coloursBlock0_index],
-                  canvasImageData.data[coloursBlock0_index + 1],
-                  canvasImageData.data[coloursBlock0_index + 2],
-                ]);
-                if (
-                  closestColourSetIdAndTone.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock0)
-                ) {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                if (
-                  coloursBlock0.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock0)
-                ) {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                break;
-              }
-              case mapWidth - 1: { // Use mapWidth (16 for NBT)
-                const coloursBlock_north_index = i - 4 * mapWidth; // Use mapWidth
-                const coloursBlock_north = exactRGBToColourSetIdAndTone([
-                  canvasImageData.data[coloursBlock_north_index],
-                  canvasImageData.data[coloursBlock_north_index + 1],
-                  canvasImageData.data[coloursBlock_north_index + 2],
-                ]);
-                if (
-                  closestColourSetIdAndTone.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north)
-                ) {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                if (closestColourSetIdAndTone.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north)) {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                // falls through
-              }
-              // eslint-disable-next-line no-fallthrough
-              default: {
-                const coloursBlock_north_index = i - 4 * mapWidth * 2; // Use mapWidth
-                const coloursBlock_inQuestion_index = i - 4 * mapWidth; // Use mapWidth
-                const coloursBlock_north = exactRGBToColourSetIdAndTone([
-                  canvasImageData.data[coloursBlock_north_index],
-                  canvasImageData.data[coloursBlock_north_index + 1],
-                  canvasImageData.data[coloursBlock_north_index + 2],
-                ]);
-                const coloursBlock_inQuestion = exactRGBToColourSetIdAndTone([
-                  canvasImageData.data[coloursBlock_inQuestion_index],
-                  canvasImageData.data[coloursBlock_inQuestion_index + 1],
-                  canvasImageData.data[coloursBlock_inQuestion_index + 2],
-                ]);
-                const coloursBlock = closestColourSetIdAndTone; // This is the current block (south relative to inQuestion)
-                if (
-                  // first under-support block
-                  coloursBlock_inQuestion.tone === "light" ||
-                  coloursBlock.tone === "dark" ||
-                  isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_inQuestion) ||
-                  (coloursBlock.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock)) ||
-                  (coloursBlock_inQuestion.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north))
-                ) {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                if (
-                  // second under-support block
-                  (coloursBlock.tone === "dark" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock)) ||
-                  (coloursBlock_inQuestion.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north))
-                ) {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                break;
-              }
-            }
-            break;
-          }
-          case WhereSupportBlocksModes.ALL_DOUBLE_OPTIMIZED.uniqueId: {
-            switch (individualMap_y) { // Use individualMap_y
-              case 0: {
-                maps[0][0].supportBlockCount += 1;
-                if (closestColourSetIdAndTone.tone === "dark") {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                break;
-              }
-              case mapWidth - 1: { // Use mapWidth (16 for NBT)
-                maps[0][0].supportBlockCount += 1;
-                if (closestColourSetIdAndTone.tone === "light") {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                // falls through
-              }
-              // eslint-disable-next-line no-fallthrough
-              default: {
-                maps[0][0].supportBlockCount += 1;
-                const coloursBlock_inQuestion_index = i - 4 * mapWidth; // Use mapWidth
-                const coloursBlock_inQuestion = exactRGBToColourSetIdAndTone([
-                  canvasImageData.data[coloursBlock_inQuestion_index],
-                  canvasImageData.data[coloursBlock_inQuestion_index + 1],
-                  canvasImageData.data[coloursBlock_inQuestion_index + 2],
-                ]);
-                const coloursBlock = closestColourSetIdAndTone; // Current block
-                if (coloursBlock_inQuestion.tone === "light" || coloursBlock.tone === "dark") {
-                  maps[0][0].supportBlockCount += 1;
-                }
-                break;
-              }
-            }
-            break;
-          }
-          default: {
-            throw new Error("Unknown support-blocks option");
-          }
-        }
-      }
-      // END support-block count
-
-      // materials count
-      if (closestColourSetIdAndTone.colourSetId !== "-1") {
-        // -1 is transparent for mapdats, ignore
-        maps[whichMap_y][whichMap_x].materials[closestColourSetIdAndTone.colourSetId] += 1;
-      }
-    }
+     // Remove progress reporting for rows
+     // postMessage({ head: "PROGRESS_REPORT", body: (y + 1) / height });
   }
+
+  // Return the processed pixel data (as RGBA buffer) and the maps structure
+  return {
+    processedPixels: outputPixelData,
+    maps: maps,
+  };
 }
 
-onmessage = (e) => {
-  coloursJSON = e.data.body.coloursJSON;
-  MapModes = e.data.body.MapModes;
-  WhereSupportBlocksModes = e.data.body.WhereSupportBlocksModes;
-  DitherMethods = e.data.body.DitherMethods;
-  canvasImageData = e.data.body.canvasImageData;
-  selectedBlocks = e.data.body.selectedBlocks;
-  optionValue_modeNBTOrMapdat = e.data.body.optionValue_modeNBTOrMapdat;
-  optionValue_mapSize_x = e.data.body.optionValue_mapSize_x;
-  optionValue_mapSize_y = e.data.body.optionValue_mapSize_y;
-  optionValue_staircasing = e.data.body.optionValue_staircasing;
-  optionValue_whereSupportBlocks = e.data.body.optionValue_whereSupportBlocks;
-  optionValue_transparency = e.data.body.optionValue_transparency;
-  optionValue_transparencyTolerance = e.data.body.optionValue_transparencyTolerance;
-  optionValue_betterColour = e.data.body.optionValue_betterColour;
-  optionValue_dithering = e.data.body.optionValue_dithering;
-
-  setupColourSetsToUse();
-  setupExactColourCache();
-  getMapartImageDataAndMaterials();
-  postMessage({
-    head: "PIXELS_MATERIALS_CURRENTSELECTEDBLOCKS",
-    body: {
-      pixels: canvasImageData,
-      maps: maps,
-      currentSelectedBlocks: selectedBlocks,
-    },
-  });
+// --- Add Exports ---
+module.exports = {
+  processImageData,
+  // Export helpers if they might be useful externally?
+  // rgb2lab,
+  // squaredEuclideanMetricColours,
+  // findClosestColourSetIdAndToneAndRGBTo,
+  // findClosest2ColourSetIdAndToneAndRGBTo,
+  // colourSetIdAndToneToRGB,
 };

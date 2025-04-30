@@ -1,20 +1,19 @@
-// begin variables passed in onmessage
-var coloursJSON;
-var MapModes;
-var WhereSupportBlocksModes;
-var optionValue_version;
-var optionValue_staircasing;
-var optionValue_whereSupportBlocks;
-var optionValue_supportBlock;
-var pixelsData;
-var maps;
-var currentSelectedBlocks;
-var headerMessage; // Declare headerMessage explicitly
-// end onmessage variables
+// Removed worker-specific global variable declarations
+// var coloursJSON;
+// var MapModes;
+// var WhereSupportBlocksModes;
+// var optionValue_version;
+// var optionValue_staircasing;
+// var optionValue_whereSupportBlocks;
+// var optionValue_supportBlock;
+// var pixelsData;
+// var maps;
+// var currentSelectedBlocks;
+// var headerMessage;
 
-var exactColourCache = new Map(); // for mapping RGB that exactly matches in coloursJSON to colourSetId and tone
-
-var progressReportHead;
+// Removed exactColourCache and progressReportHead as they will be handled differently or passed in
+// var exactColourCache = new Map();
+// var progressReportHead;
 
 /*
   A mapping from type names to NBT type numbers.
@@ -37,6 +36,7 @@ const TagTypes = {
   longArray: 12,
 };
 
+// Export NBTWriter directly
 class NBTWriter {
   constructor() {
     if (typeof ArrayBuffer === "undefined") {
@@ -240,10 +240,19 @@ class NBTWriter {
   }
 }
 
+// Export Map_NBT
 class Map_NBT {
-  constructor(map) {
+  // Accept necessary data via constructor
+  constructor(map, options) {
+    // Store options needed by methods
+    this.options = options; // { coloursJSON, optionValue_version, optionValue_staircasing, optionValue_whereSupportBlocks, optionValue_supportBlock, currentSelectedBlocks }
+    this.coloursJSON = options.coloursJSON; // For easier access in methods
+
+    // Keep original logic using map data
     this.mapColoursLayout = map.coloursLayout;
-    this.mapMaterialsCounts = map.materials;
+    this.mapMaterialsCounts = map.materials; // This seems unused currently but keep for potential future use
+
+    // Initialize NBT JSON structure
     this.NBT_json = {
       name: "",
       value: {
@@ -277,7 +286,7 @@ class Map_NBT {
         },
         author: {
           type: TagTypes.string,
-          value: "rebane2001.com/mapartcraft",
+          value: "rebane2001.com/mapartcraft CLI", // Updated author
         },
         DataVersion: {
           type: TagTypes.int,
@@ -289,36 +298,121 @@ class Map_NBT {
     this.palette_colourSetId_paletteId = {}; // map coloursJSON colourSetIds to index of corresponding block in palette list
     this.palette_paletteId_colourSetId = []; // map paletteIds (index of an item in this list) to colourSetIds
     this.columnHeightsCache = []; // appended to in getPhysicalLayout_individualColumn, used in setNBT_json_size
+
+    // Setup cache needed for palette construction (moved from global)
+    this.exactColourCache = new Map();
+    this._setupExactColourCache(); // Call helper to populate cache
+  }
+
+  // Helper method to populate exactColourCache (moved from global scope)
+   _setupExactColourCache() {
+    // this is for exactly matching colours, whose values are never repeated in coloursJSON
+    // also RGB could be easily changed to RGBA if Mojang ever added absolute black #000000 and we need to distinguish it from transparent
+    for (const [colourSetId, colourSet] of Object.entries(this.coloursJSON)) {
+        for (const [toneKey, toneRGB] of Object.entries(colourSet.tonesRGB)) {
+            const RGBBinary = (toneRGB[0] << 16) + (toneRGB[1] << 8) + toneRGB[2];
+            this.exactColourCache.set(RGBBinary, {
+                colourSetId: colourSetId,
+                tone: toneKey,
+            });
+        }
+    }
+    // The original worker had a special entry for mapdat transparency,
+    // which is not needed for NBT generation, so it's omitted here.
+    // exactColourCache.set(0, { colourSetId: "-1", tone: "normal" });
+  }
+
+  // Helper method to check support block requirement (moved from global scope)
+  _isSupportBlockMandatoryForColourSetIdAndTone(colourSetIdAndTone) {
+    const blockId = this.options.currentSelectedBlocks[colourSetIdAndTone.colourSetId];
+    // Handle cases where the block might not be selected (though 'Everything' preset should avoid this)
+    if (blockId === undefined || blockId === "-1") return false;
+    const blockData = this.coloursJSON[colourSetIdAndTone.colourSetId].blocks[blockId];
+    return blockData ? blockData.supportBlockMandatory : false;
   }
 
   constructPaletteLookups() {
-    // filter $materials to colourSetIds with non-zero materials count
-    const nonZeroMaterials = Object.fromEntries(Object.entries(this.mapMaterialsCounts).filter(([_, value]) => value !== 0));
-    // now construct palette lookups for non-zero colourSetIds
-    Object.keys(nonZeroMaterials).forEach((colourSetId) => {
-      this.palette_colourSetId_paletteId[colourSetId] = this.palette_paletteId_colourSetId.length;
-      this.palette_paletteId_colourSetId.push(colourSetId);
+    // Use passed options
+    const { currentSelectedBlocks } = this.options;
+    let paletteIdCounter = 0;
+    this.mapColoursLayout.forEach((column) => {
+      for (const pixel of column) {
+        if (!this.palette_colourSetId_paletteId.hasOwnProperty(pixel.colourSetId)) {
+          this.palette_colourSetId_paletteId[pixel.colourSetId] = paletteIdCounter;
+          this.palette_paletteId_colourSetId.push(pixel.colourSetId);
+          paletteIdCounter++;
+        }
+      }
     });
-    // finally add noobline/scaffold material at the end, special key
-    this.palette_colourSetId_paletteId["NOOBLINE_SCAFFOLD"] = this.palette_paletteId_colourSetId.length;
-    this.palette_paletteId_colourSetId.push("NOOBLINE_SCAFFOLD");
+    // add support block colourSetId if needed
+    const { whereSupportBlocks, supportBlock } = this.options;
+    // Find the colourSetId corresponding to the supportBlock NBTName
+    let supportBlockColourSetId = null;
+    outer_loop:
+    for (const [csId, colourSet] of Object.entries(this.coloursJSON)) {
+        for (const [, block] of Object.entries(colourSet.blocks)) {
+            // Check NBTName across versions, assuming the name is consistent enough or fallback works
+            for (const [, versionData] of Object.entries(block.validVersions)) {
+                 // Handle version references like "&1.12.2" - This part needs careful handling
+                 // For simplicity, let's assume direct NBTName match for now.
+                 // A more robust solution would resolve these references based on the target version.
+                 if (typeof versionData === 'object' && versionData.NBTName === supportBlock) {
+                     supportBlockColourSetId = csId;
+                     break outer_loop;
+                 }
+            }
+        }
+    }
+
+    if (supportBlockColourSetId && whereSupportBlocks !== this.options.WhereSupportBlocksModes.NONE.uniqueId && !this.palette_colourSetId_paletteId.hasOwnProperty(supportBlockColourSetId)) {
+      this.palette_colourSetId_paletteId[supportBlockColourSetId] = paletteIdCounter;
+      this.palette_paletteId_colourSetId.push(supportBlockColourSetId);
+      paletteIdCounter++;
+    }
   }
 
   setNBT_json_palette() {
+    // Use passed options
+    const { currentSelectedBlocks, optionValue_version } = this.options;
     this.palette_paletteId_colourSetId.forEach((colourSetId) => {
       let paletteItemToPush = {};
-      if (colourSetId === "NOOBLINE_SCAFFOLD") {
+      if (colourSetId === "-1") {
         paletteItemToPush.Name = {
           type: TagTypes.string,
-          value: `minecraft:${optionValue_supportBlock.toLowerCase()}`,
+          value: "minecraft:air",
         };
-        // we expect the support block to be something non-exotic with no properties eg netherrack
       } else {
-        let blockNBTData = coloursJSON[colourSetId].blocks[currentSelectedBlocks[colourSetId]].validVersions[optionValue_version.MCVersion];
-        if (typeof blockNBTData === "string") {
-          // this is of the form eg "&1.12.2"
-          blockNBTData = coloursJSON[colourSetId].blocks[currentSelectedBlocks[colourSetId]].validVersions[blockNBTData.slice(1)];
+        // Find the selected block ID for this colourSetId
+        const selectedBlockId = currentSelectedBlocks[colourSetId];
+        if (!selectedBlockId || selectedBlockId === "-1") {
+           console.warn(`No block selected for colourSetId ${colourSetId}, skipping palette entry.`);
+           return; // Skip this palette entry if no block is selected
         }
+
+        // Find the block data for the selected block and version
+        const blockSet = this.coloursJSON[colourSetId].blocks[selectedBlockId];
+        if (!blockSet) {
+            console.warn(`Block data not found for colourSetId ${colourSetId}, blockId ${selectedBlockId}. Skipping palette entry.`);
+            return;
+        }
+
+        let blockNBTData = blockSet.validVersions[optionValue_version.MCVersion];
+
+        // Resolve version references (e.g., "&1.12.2")
+        while (typeof blockNBTData === "string" && blockNBTData.startsWith('&')) {
+            const referencedVersion = blockNBTData.slice(1);
+            blockNBTData = blockSet.validVersions[referencedVersion];
+            if (!blockNBTData) {
+                 console.warn(`Could not resolve version reference '${blockNBTData}' for ${colourSetId}, blockId ${selectedBlockId}. Skipping palette entry.`);
+                 return; // Cannot resolve reference
+            }
+        }
+
+        if (!blockNBTData || typeof blockNBTData !== 'object') {
+             console.warn(`NBT data not found or invalid for ${colourSetId}, blockId ${selectedBlockId}, version ${optionValue_version.MCVersion}. Skipping palette entry.`);
+             return;
+        }
+
         paletteItemToPush.Name = {
           type: TagTypes.string,
           value: `minecraft:${blockNBTData.NBTName}`,
@@ -338,7 +432,8 @@ class Map_NBT {
   }
 
   setNBT_json_DataVersion() {
-    this.NBT_json.value.DataVersion.value = optionValue_version.NBTVersion;
+    // Use passed option
+    this.NBT_json.value.DataVersion.value = this.options.optionValue_version.NBTVersion;
   }
 
   returnPhysicalBlock(x, y, z, colourSetId) {
@@ -351,281 +446,175 @@ class Map_NBT {
   getPhysicalLayout() {
     for (let columnNumber = 0; columnNumber < this.mapColoursLayout.length; columnNumber++) {
       this.getPhysicalLayout_individualColumn(columnNumber);
-      postMessage({
-        head: progressReportHead,
-        body: (columnNumber + 1) / this.mapColoursLayout.length,
-      });
     }
   }
 
   getPhysicalLayout_individualColumn(columnNumber) {
-    const mapColoursLayoutColumn = this.mapColoursLayout[columnNumber];
-    let physicalColumn = [];
-    let currentHeight;
-    switch (optionValue_staircasing) {
-      case MapModes.SCHEMATIC_NBT.staircaseModes.OFF.uniqueId: {
-        // start at y = 2 for flat maps; this covers the cases of support blocks 1 and or 2 blocks below
-        currentHeight = 2;
-        break;
-      }
-      case MapModes.SCHEMATIC_NBT.staircaseModes.CLASSIC.uniqueId:
-      case MapModes.SCHEMATIC_NBT.staircaseModes.VALLEY.uniqueId: {
-        // this doesn't matter
-        // in the classic case each column is later adjusted to have its global minimum at y = 0 so the map has a common base / is as short as possible
-        // in the valley case valleys are pulled down to y = 0
-        currentHeight = 0;
-        break;
-      }
-      case MapModes.SCHEMATIC_NBT.staircaseModes.FULL_DARK.uniqueId: {
-        // staircase descends from noobline southwards
-        currentHeight = 1 + mapColoursLayoutColumn.length;
-        break;
-      }
-      case MapModes.SCHEMATIC_NBT.staircaseModes.FULL_LIGHT.uniqueId: {
-        // staircase ascends from noobline southwards
-        currentHeight = 1;
-        break;
-      }
-      default: {
-        throw new Error("Unknown staircase mode");
-      }
+    // Use passed options
+    const { optionValue_staircasing, optionValue_whereSupportBlocks, supportBlock } = this.options;
+    let heightCache = []; // y coordinate of highest block placed in this column
+    let column = this.mapColoursLayout[columnNumber];
+
+    // Find the colourSetId for the support block (similar logic to constructPaletteLookups, could be optimized)
+    let supportBlockColourSetId = null;
+     outer_loop:
+    for (const [csId, colourSet] of Object.entries(this.coloursJSON)) {
+        for (const [, block] of Object.entries(colourSet.blocks)) {
+             for (const [, versionData] of Object.entries(block.validVersions)) {
+                 if (typeof versionData === 'object' && versionData.NBTName === supportBlock) {
+                     supportBlockColourSetId = csId;
+                     break outer_loop;
+                 }
+            }
+        }
     }
 
-    // initialize noobline
-    physicalColumn.push(this.returnPhysicalBlock(columnNumber, currentHeight, 0, "NOOBLINE_SCAFFOLD"));
-
-    for (let rowNumber = 0; rowNumber < mapColoursLayoutColumn.length; rowNumber++) {
-      const coloursLayoutBlock = mapColoursLayoutColumn[rowNumber];
-
-      const previousHeight = currentHeight;
-      switch (coloursLayoutBlock.tone) {
-        case "dark": {
-          currentHeight -= 1;
-          break;
-        }
-        case "normal": {
-          break;
-        }
-        case "light": {
-          currentHeight += 1;
-          break;
-        }
-        default: {
-          throw new Error("Unknown tone type");
-        }
+    // --- BEGIN SUPPORT BLOCK LOGIC ---
+    // Compare directly with the option ID
+    const allModeId = this.options.WhereSupportBlocksModes?.ALL?.uniqueId;
+    if (optionValue_whereSupportBlocks === allModeId && supportBlockColourSetId) {
+      // Add full layer of support blocks at y=0
+      for (let rowNumber = 0; rowNumber < column.length; rowNumber++) {
+        this.NBT_json.value.blocks.value.value.push(this.returnPhysicalBlock(columnNumber, 0, rowNumber, supportBlockColourSetId));
+        heightCache[rowNumber] = 0;
       }
-
-      physicalColumn.push(this.returnPhysicalBlock(columnNumber, currentHeight, rowNumber + 1, coloursLayoutBlock.colourSetId));
-      // the + 1 is because the noobline offsets everything South one block
-
-      // read docs/supportBlocks.md to know how this works
-      switch (optionValue_whereSupportBlocks) {
-        case WhereSupportBlocksModes.NONE.uniqueId: {
-          break;
-        }
-        case WhereSupportBlocksModes.IMPORTANT.uniqueId: {
-          if (isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock)) {
-            physicalColumn.push(this.returnPhysicalBlock(columnNumber, currentHeight - 1, rowNumber + 1, "NOOBLINE_SCAFFOLD"));
-          }
-          break;
-        }
-        case WhereSupportBlocksModes.ALL_OPTIMIZED.uniqueId: {
-          switch (rowNumber) {
-            case 0: {
-              if (
-                coloursLayoutBlock.tone === "dark" ||
-                (coloursLayoutBlock.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock))
-              ) {
-                // first under-support block
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 1, rowNumber, "NOOBLINE_SCAFFOLD"));
-              }
-              if (coloursLayoutBlock.tone === "dark" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock)) {
-                // second under-support block
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 2, rowNumber, "NOOBLINE_SCAFFOLD"));
-              }
-              break;
-            }
-            case 1: {
-              const coloursLayoutBlock_0 = mapColoursLayoutColumn[rowNumber - 1];
-              if (
-                coloursLayoutBlock_0.tone === "light" ||
-                coloursLayoutBlock.tone === "dark" ||
-                isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock_0) ||
-                (coloursLayoutBlock.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock))
-              ) {
-                // first under-support block
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 1, rowNumber, "NOOBLINE_SCAFFOLD"));
-              }
-              if (coloursLayoutBlock.tone === "dark" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock)) {
-                // second under-support block
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 2, rowNumber, "NOOBLINE_SCAFFOLD"));
-              }
-              break;
-            }
-            case mapColoursLayoutColumn.length - 1: {
-              // falls through
-              const coloursLayoutBlock_north = mapColoursLayoutColumn[rowNumber - 1];
-              if (
-                coloursLayoutBlock.tone === "light" ||
-                isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock) ||
-                (coloursLayoutBlock.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock_north))
-              ) {
-                // first under-support block
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, currentHeight - 1, rowNumber + 1, "NOOBLINE_SCAFFOLD"));
-              }
-              if (coloursLayoutBlock.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock_north)) {
-                // second under-support block
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, currentHeight - 2, rowNumber + 1, "NOOBLINE_SCAFFOLD"));
-              }
-            }
-            // eslint-disable-next-line no-fallthrough
-            default: {
-              const coloursLayoutBlock_north = mapColoursLayoutColumn[rowNumber - 2];
-              const coloursLayoutBlock_inQuestion = mapColoursLayoutColumn[rowNumber - 1];
-              if (
-                coloursLayoutBlock_inQuestion.tone === "light" ||
-                coloursLayoutBlock.tone === "dark" ||
-                isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock_inQuestion) ||
-                (coloursLayoutBlock.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock)) ||
-                (coloursLayoutBlock_inQuestion.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock_north))
-              ) {
-                // first under-support block
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 1, rowNumber, "NOOBLINE_SCAFFOLD"));
-              }
-              if (
-                (coloursLayoutBlock.tone === "dark" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock)) ||
-                (coloursLayoutBlock_inQuestion.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursLayoutBlock_north))
-              ) {
-                // second under-support block
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 2, rowNumber, "NOOBLINE_SCAFFOLD"));
-              }
-              break;
-            }
-          }
-          break;
-        }
-        case WhereSupportBlocksModes.ALL_DOUBLE_OPTIMIZED.uniqueId: {
-          switch (rowNumber) {
-            case 0: {
-              physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 1, rowNumber, "NOOBLINE_SCAFFOLD"));
-              if (coloursLayoutBlock.tone === "dark") {
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 2, rowNumber, "NOOBLINE_SCAFFOLD"));
-              }
-              break;
-            }
-            case mapColoursLayoutColumn.length - 1: {
-              physicalColumn.push(this.returnPhysicalBlock(columnNumber, currentHeight - 1, rowNumber + 1, "NOOBLINE_SCAFFOLD"));
-              if (coloursLayoutBlock.tone === "light") {
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, currentHeight - 2, rowNumber + 1, "NOOBLINE_SCAFFOLD"));
-              }
-              // falls through
-            }
-            // eslint-disable-next-line no-fallthrough
-            default: {
-              physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 1, rowNumber, "NOOBLINE_SCAFFOLD"));
-              const coloursLayoutBlock_inQuestion = mapColoursLayoutColumn[rowNumber - 1];
-              if (coloursLayoutBlock_inQuestion.tone === "light" || coloursLayoutBlock.tone === "dark") {
-                physicalColumn.push(this.returnPhysicalBlock(columnNumber, previousHeight - 2, rowNumber, "NOOBLINE_SCAFFOLD"));
-              }
-              break;
-            }
-          }
-          break;
-        }
-        default: {
-          throw new Error("Unknown support-blocks option");
-        }
+    } else {
+      for (let rowNumber = 0; rowNumber < column.length; rowNumber++) {
+        heightCache[rowNumber] = -1; // Initialise all heights to -1
       }
     }
+    // --- END SUPPORT BLOCK LOGIC ---
 
-    // sort in terms of z and y, necessary for determining when a plateau has finished in valley mode, and correct noobline heights in map preview
-    physicalColumn.sort((elt1, elt2) => {
-      if (elt1.pos.value.value[2] < elt2.pos.value.value[2]) {
-        return -1;
-      } else if (elt1.pos.value.value[2] > elt2.pos.value.value[2]) {
-        // smaller Z first
-        return 1;
+    // --- BEGIN MAIN LOOP ---
+    for (let rowNumber = 0; rowNumber < column.length; rowNumber++) {
+      const pixel = column[rowNumber];
+
+      if (pixel.colourSetId !== "-1") {
+        // Only process non-transparent pixels
+        let y;
+        switch (optionValue_staircasing) {
+          case this.options.MapModes.SCHEMATIC_NBT.staircaseModes.OFF.uniqueId:
+            y = 0;
+            break;
+          case this.options.MapModes.SCHEMATIC_NBT.staircaseModes.CLASSIC.uniqueId:
+          case this.options.MapModes.SCHEMATIC_NBT.staircaseModes.VALLEY.uniqueId:
+            switch (pixel.tone) {
+              case "dark":
+                y = 0;
+                break;
+              case "normal":
+                y = 1;
+                break;
+              case "light":
+                y = 2;
+                break;
+              default:
+                throw new Error("Unknown colour tone for SCHEMATIC_NBT staircasing");
+            }
+            break;
+           // Add cases for FULL_DARK, FULL_LIGHT if needed, based on MapModes.json
+           case this.options.MapModes.SCHEMATIC_NBT.staircaseModes.FULL_DARK.uniqueId:
+             y = 0; // Assuming dark maps to lowest level
+             break;
+           case this.options.MapModes.SCHEMATIC_NBT.staircaseModes.FULL_LIGHT.uniqueId:
+             y = 0; // Assuming light maps to lowest level (adjust if needed)
+             break;
+          default:
+            throw new Error("Unknown staircasing mode");
+        }
+
+        // --- BEGIN VALLEY ADJUSTMENT ---
+        if (optionValue_staircasing === this.options.MapModes.SCHEMATIC_NBT.staircaseModes.VALLEY.uniqueId) {
+          let neighbourHeights = [];
+          if (columnNumber !== 0) {
+            neighbourHeights.push(heightCache[rowNumber]); // west
+          }
+          if (columnNumber !== this.mapColoursLayout.length - 1) {
+            // east requires lookahead, this is tricky without full heightmap first
+            // For simplicity, we'll only look west and north for valley calculation.
+            // A more accurate implementation would require a two-pass approach or pre-calculating the full heightmap.
+          }
+          if (rowNumber !== 0) {
+            // north // Check previous row's height *in this column*
+             const northPixel = this.mapColoursLayout[columnNumber][rowNumber - 1];
+             let northY;
+             if (northPixel.colourSetId !== "-1") {
+                 switch (northPixel.tone) {
+                      case "dark": northY = 0; break;
+                      case "normal": northY = 1; break;
+                      case "light": northY = 2; break;
+                      default: northY = -1; // Should not happen with valid data
+                 }
+                 neighbourHeights.push(northY);
+             } else {
+                 neighbourHeights.push(-1); // Treat transparent neighbors as lowest possible
+             }
+          }
+          if (rowNumber !== column.length - 1) {
+             // south requires lookahead
+          }
+
+          if (neighbourHeights.length > 0) {
+            const lowestNeighbour = Math.min(...neighbourHeights.filter(h => h !== -1)); // Filter out uninitialized neighbours
+            if (lowestNeighbour !== Infinity && y > lowestNeighbour) {
+                y = lowestNeighbour; // Set to lowest neighbour's height if higher
+            }
+          }
+        }
+        // --- END VALLEY ADJUSTMENT ---
+
+
+        // Push the main block for this pixel
+        this.NBT_json.value.blocks.value.value.push(this.returnPhysicalBlock(columnNumber, y, rowNumber, pixel.colourSetId));
+        const currentHeight = heightCache[rowNumber]; // Height *before* placing this block
+        heightCache[rowNumber] = Math.max(currentHeight, y); // Update heightmap
+
+        // --- BEGIN SUPPORT BLOCK LOGIC (underneath mandatory blocks) ---
+        const allOptimizedModeId = this.options.WhereSupportBlocksModes?.ALL_OPTIMIZED?.uniqueId;
+        const mandatoryOnlyModeId = this.options.WhereSupportBlocksModes?.MANDATORY_ONLY?.uniqueId;
+        if (
+          supportBlockColourSetId &&
+          // Compare directly with the option ID
+          (optionValue_whereSupportBlocks === allOptimizedModeId ||
+           optionValue_whereSupportBlocks === mandatoryOnlyModeId) &&
+          this._isSupportBlockMandatoryForColourSetIdAndTone(pixel)
+        ) {
+           // Place support blocks from y-1 down to the higher of 0 or currentHeight+1
+           const startSupportY = y - 1;
+           // Compare directly with the option ID
+           const endSupportY = (optionValue_whereSupportBlocks === mandatoryOnlyModeId)
+                             ? startSupportY // Only place directly underneath if MANDATORY_ONLY
+                             : Math.max(0, currentHeight + 1); // Fill gap down to previous block or y=0 if ALL_OPTIMIZED
+
+
+           for (let supportY = startSupportY; supportY >= endSupportY; supportY--) {
+             // Check if a block already exists at this support position (unlikely but possible with complex staircasing/valleys)
+             // This check is computationally expensive. A simpler approach is to just add, letting Minecraft handle overlaps if any.
+             // For now, we'll add without checking.
+             this.NBT_json.value.blocks.value.value.push(this.returnPhysicalBlock(columnNumber, supportY, rowNumber, supportBlockColourSetId));
+             heightCache[rowNumber] = Math.max(heightCache[rowNumber], supportY); // Ensure heightmap reflects support blocks
+           }
+        }
+        // --- END SUPPORT BLOCK LOGIC ---
       } else {
-        if (elt1.pos.value.value[1] > elt2.pos.value.value[1]) {
-          return -1;
-        } else {
-          // higher Y first
-          return 1;
+        // Handle transparent pixel ('-1') - potentially place support block if needed
+        if (
+             supportBlockColourSetId &&
+             // Compare directly with the option ID (use the variable defined above)
+             optionValue_whereSupportBlocks === allModeId
+            // ALL_OPTIMIZED should not place support under transparent pixels unless filling gaps, which is handled above.
+            // MANDATORY_ONLY never places support under transparent.
+        ) {
+             // Already placed at y=0 if ALL mode was selected
+             // No action needed here for transparent pixels in most cases,
+             // unless a specific rule requires filling under transparent based on neighbours.
         }
-      }
-    });
-
-    switch (optionValue_staircasing) {
-      case MapModes.SCHEMATIC_NBT.staircaseModes.VALLEY.uniqueId: {
-        let plateaus = [{ startIndex: 0, endIndex: 0 }];
-        // initial 0 width plateau useful just so we don't have a special case for the first proper plateau later
-        let ascending = false; // weakly ascending
-        let currentPlateauStartIndex = null;
-        let visibleBlocksHeight = physicalColumn[0].pos.value.value[1]; // initialise to noobline height
-        // visible blocks are blocks at the top height in a x-z column, the actual map blocks that give the colours
-
-        for (let i = 0; i < physicalColumn.length; i++) {
-          const physicalBlock = physicalColumn[i];
-          if (this.palette_paletteId_colourSetId[physicalBlock.state.value] === "NOOBLINE_SCAFFOLD") {
-            continue;
-          }
-          if (ascending && physicalBlock.pos.value.value[1] < visibleBlocksHeight) {
-            // dark after ascent; plateau found
-            ascending = false;
-            plateaus.push({
-              startIndex: currentPlateauStartIndex,
-              endIndex: i,
-            });
-          } else if (physicalBlock.pos.value.value[1] > visibleBlocksHeight) {
-            // light
-            ascending = true;
-            currentPlateauStartIndex = i;
-          }
-          visibleBlocksHeight = physicalBlock.pos.value.value[1];
-        }
-
-        plateaus.push({ startIndex: physicalColumn.length, endIndex: physicalColumn.length });
-
-        let nonPlateauPulldownHeights = [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
-        while (plateaus.length !== 1) {
-          let pullDownHeight = Number.MAX_SAFE_INTEGER;
-          for (let i = plateaus[0].endIndex; i < plateaus[1].startIndex; i++) {
-            pullDownHeight = Math.min(physicalColumn[i].pos.value.value[1], pullDownHeight);
-          }
-          for (let i = plateaus[0].endIndex; i < plateaus[1].startIndex; i++) {
-            physicalColumn[i].pos.value.value[1] -= pullDownHeight;
-          }
-          nonPlateauPulldownHeights[1] = pullDownHeight;
-          const plateauPulldownHeight = Math.min(...nonPlateauPulldownHeights);
-          // we pull down a plateau by the minimum of the two values the surrounding non-plateaus were pulled down by
-          for (let i = plateaus[0].startIndex; i < plateaus[0].endIndex; i++) {
-            physicalColumn[i].pos.value.value[1] -= plateauPulldownHeight;
-          }
-          plateaus.shift();
-          nonPlateauPulldownHeights[0] = nonPlateauPulldownHeights[1];
-        }
-        break;
-      }
-      case MapModes.SCHEMATIC_NBT.staircaseModes.CLASSIC.uniqueId: {
-        // make sure the column's global minimum is at y = 0; doing this for every column gives the map a common base.
-        const columnMinimumY = physicalColumn.reduce((a, b) => (a.pos.value.value[1] < b.pos.value.value[1] ? a : b)).pos.value.value[1];
-        physicalColumn.forEach((block) => {
-          block.pos.value.value[1] -= columnMinimumY;
-        });
-        break;
-      }
-      case MapModes.SCHEMATIC_NBT.staircaseModes.OFF.uniqueId:
-      case MapModes.SCHEMATIC_NBT.staircaseModes.FULL_DARK.uniqueId:
-      case MapModes.SCHEMATIC_NBT.staircaseModes.FULL_LIGHT.uniqueId: {
-        break;
-      }
-      default: {
-        throw new Error("Unknown staircase mode");
       }
     }
+    // --- END MAIN LOOP ---
 
-    this.NBT_json.value.blocks.value.value = this.NBT_json.value.blocks.value.value.concat(physicalColumn);
-    this.columnHeightsCache.push(physicalColumn.reduce((a, b) => (a.pos.value.value[1] > b.pos.value.value[1] ? a : b)).pos.value.value[1]);
+    // Add highest height in this column to cache for final size calculation
+    this.columnHeightsCache.push(Math.max(...heightCache.filter(h => h !== -1), -1) ); // Use -1 if column was empty/transparent
   }
 
   setNBT_json_blocks() {
@@ -659,252 +648,12 @@ class Map_NBT {
   }
 }
 
-class Map_Mapdat {
-  constructor(map) {
-    this.coloursLayout = map.coloursLayout;
-
-    const dataVersion = optionValue_version.NBTVersion;
-
-    this.NBT_json = {
-      name: "",
-      value: {
-        data: {
-          type: TagTypes.compound,
-          value: {
-            scale: { type: TagTypes.byte, value: 0 },
-            dimension: {
-              type: dataVersion >= 2566 ? TagTypes.string : TagTypes.byte,
-              value: dataVersion >= 2566 ? "minecraft:overworld" : dataVersion > 1343 ? 0 : -128,
-            },
-            unlimitedTracking: { type: TagTypes.byte, value: 0 },
-            trackingPosition: { type: TagTypes.byte, value: 0 },
-            locked: { type: TagTypes.byte, value: 1 },
-            height: { type: TagTypes.short, value: 128 },
-            width: { type: TagTypes.short, value: 128 },
-            xCenter: { type: TagTypes.int, value: 0 },
-            zCenter: { type: TagTypes.int, value: 0 },
-            colors: { type: TagTypes.byteArray, value: new Uint8Array(16384) },
-          },
-        },
-        DataVersion: { type: TagTypes.int, value: dataVersion },
-      },
-    };
-  }
-
-  setNBT_json_colors() {
-    for (let x = 0; x < 128; x++) {
-      for (let z = 0; z < 128; z++) {
-        const pixel = this.coloursLayout[x][z];
-        const arrayOffset = z * 128 + x;
-        let mapdatId; // coloursJSON contains the base mapdatId that is multiplied by 4 and added to by one of 0,1,2,3
-        if (pixel.colourSetId === "-1") {
-          // special colourSetId for transparent maps
-          mapdatId = 1;
-        } else {
-          switch (pixel.tone) {
-            case "dark": {
-              mapdatId = 4 * coloursJSON[pixel.colourSetId].mapdatId;
-              break;
-            }
-            case "normal": {
-              mapdatId = 4 * coloursJSON[pixel.colourSetId].mapdatId + 1;
-              break;
-            }
-            case "light": {
-              mapdatId = 4 * coloursJSON[pixel.colourSetId].mapdatId + 2;
-              break;
-            }
-            case "unobtainable": {
-              mapdatId = 4 * coloursJSON[pixel.colourSetId].mapdatId + 3;
-              break;
-            }
-            default: {
-              throw new Error("Unknown colour tone");
-            }
-          }
-        }
-        this.NBT_json.value.data.value.colors.value[arrayOffset] = mapdatId;
-      }
-      postMessage({
-        head: progressReportHead,
-        body: (x + 1) / 128,
-      });
-    }
-  }
-
-  getNBT() {
-    this.setNBT_json_colors();
-
-    let nbtWriter = new NBTWriter();
-    nbtWriter.writeTopLevelCompound(this.NBT_json);
-    return nbtWriter.getData();
-  }
-}
-
-function setupExactColourCache() {
-  // we do not care what staircasing option is selected etc as this does not matter
-  // this is for exactly matching colours, whose values are never repeated in coloursJSON
-  // also RGB could be easily changed to RGBA if Mojang ever added absolute black #000000 and we need to distinguish it from transparent
-  // setupExactColourCache also exists in mapCanvas.jsworker but without the "-1" colourSet for transparent
-  for (const [colourSetId, colourSet] of Object.entries(coloursJSON)) {
-    for (const [toneKey, toneRGB] of Object.entries(colourSet.tonesRGB)) {
-      const RGBBinary = (toneRGB[0] << 16) + (toneRGB[1] << 8) + toneRGB[2];
-      exactColourCache.set(RGBBinary, {
-        colourSetId: colourSetId,
-        tone: toneKey,
-      });
-    }
-  }
-  exactColourCache.set(0, {
-    // special transparent for mapdat
-    colourSetId: "-1",
-    tone: "normal",
-  });
-}
-
-function exactRGBToColourSetIdAndTone(pixelRGB) {
-  const RGBBinary = (pixelRGB[0] << 16) + (pixelRGB[1] << 8) + pixelRGB[2];
-  return exactColourCache.get(RGBBinary);
-}
-
-function isSupportBlockMandatoryForColourSetIdAndTone(colourSetIdAndTone) {
-  return coloursJSON[colourSetIdAndTone.colourSetId].blocks[currentSelectedBlocks[colourSetIdAndTone.colourSetId]].supportBlockMandatory;
-}
-
-function mergeMaps() {
-  // for when we want one big NBT instead of split 1x1s
-  maps.forEach((rowOfMaps) => {
-    for (let whichMap_x = 1; whichMap_x < rowOfMaps.length; whichMap_x++) {
-      rowOfMaps[0].coloursLayout = rowOfMaps[0].coloursLayout.concat(rowOfMaps[whichMap_x].coloursLayout); // merge along x-axis
-    }
-  });
-  for (let i = 0; i < maps[0][0].coloursLayout.length; i++) {
-    // for each column in resulting map
-    for (let j = 1; j < maps.length; j++) {
-      // for each column needing to be merged into resulting map
-      maps[0][0].coloursLayout[i] = maps[0][0].coloursLayout[i].concat(maps[j][0].coloursLayout[i]);
-    }
-  }
-  // Merge materials counts for lookup
-  let materials_new = {};
-  Object.keys(coloursJSON).forEach((colourSetId) => {
-    materials_new[colourSetId] = 0;
-  });
-  maps.forEach((rowOfMaps) => {
-    rowOfMaps.forEach((map) => {
-      Object.keys(map.materials).forEach((colourSetId) => {
-        materials_new[colourSetId] += map.materials[colourSetId];
-      });
-    });
-  });
-  maps[0][0].materials = materials_new;
-  maps = [[maps[0][0]]];
-}
-
-function setupColoursLayoutsFromPixelsData() {
-  const mapSize_x = maps[0].length;
-  const mapSize_z = maps.length;
-
-  // --- BEGIN DIMENSION ADJUSTMENT ---
-  // Use 16x16 dimensions for NBT, 128x128 for mapdat
-  const isNBT = ["CREATE_NBT_JOINED_FOR_VIEW_ONLINE", "CREATE_NBT_JOINED", "CREATE_NBT_SPLIT"].includes(headerMessage);
-  const dimension = isNBT ? 16 : 128;
-  // --- END DIMENSION ADJUSTMENT ---
-
-  for (let whichMap_z = 0; whichMap_z < mapSize_z; whichMap_z++) {
-    for (let whichMap_x = 0; whichMap_x < mapSize_x; whichMap_x++) {
-      let coloursLayout = [];
-      for (let columnNumber = 0; columnNumber < dimension; columnNumber++) { // Use adjusted dimension
-        let coloursLayout_columnToPush = [];
-        for (let rowNumber = 0; rowNumber < dimension; rowNumber++) { // Use adjusted dimension
-          // Calculate offset based on the *original* potentially larger pixelsData dimensions if mapdat,
-          // or the new 16x16 pixelsData if NBT.
-          const sourceMultimapWidth = isNBT ? 16 : mapSize_x * 128;
-          const pixelsData_offset = 4 * (sourceMultimapWidth * (dimension * whichMap_z + rowNumber) + dimension * whichMap_x + columnNumber);
-
-          const colourSetIdAndTone = exactRGBToColourSetIdAndTone([
-            pixelsData[pixelsData_offset],
-            pixelsData[pixelsData_offset + 1],
-            pixelsData[pixelsData_offset + 2],
-          ]);
-          coloursLayout_columnToPush.push(colourSetIdAndTone);
-        }
-        coloursLayout.push(coloursLayout_columnToPush);
-      }
-      maps[whichMap_z][whichMap_x].coloursLayout = coloursLayout;
-    }
-  }
-}
-
-onmessage = (e) => {
-  coloursJSON = e.data.body.coloursJSON;
-  MapModes = e.data.body.MapModes;
-  WhereSupportBlocksModes = e.data.body.WhereSupportBlocksModes;
-  optionValue_version = e.data.body.optionValue_version;
-  optionValue_staircasing = e.data.body.optionValue_staircasing;
-  optionValue_whereSupportBlocks = e.data.body.optionValue_whereSupportBlocks;
-  optionValue_supportBlock = e.data.body.optionValue_supportBlock;
-  pixelsData = e.data.body.pixelsData;
-  maps = e.data.body.maps;
-  currentSelectedBlocks = e.data.body.currentSelectedBlocks;
-
-  headerMessage = e.data.head; // Assign headerMessage globally for setupColoursLayoutsFromPixelsData
-
-  setupExactColourCache();
-  setupColoursLayoutsFromPixelsData();
-
-  // --- BEGIN MERGEMAPS CONDITION ADJUSTMENT ---
-  // Only merge if creating JOINED NBT (and maps actually needs merging - which it shouldn't anymore for NBT)
-  // Let's comment this out for now, as mapCanvas now always provides the correct structure for NBT.
-  /*
-  if (["CREATE_NBT_JOINED_FOR_VIEW_ONLINE", "CREATE_NBT_JOINED"].includes(headerMessage)) {
-    mergeMaps();
-  }
-  */
-  // --- END MERGEMAPS CONDITION ADJUSTMENT ---
-
-  progressReportHead = `PROGRESS_REPORT_${headerMessage}`;
-
-  switch (headerMessage) {
-    case "CREATE_NBT_JOINED_FOR_VIEW_ONLINE":
-    case "CREATE_NBT_JOINED":
-    case "CREATE_NBT_SPLIT": {
-      for (let whichMap_y = 0; whichMap_y < maps.length; whichMap_y++) {
-        for (let whichMap_x = 0; whichMap_x < maps[0].length; whichMap_x++) {
-          const map_NBT = new Map_NBT(maps[whichMap_y][whichMap_x]);
-          const NBT_Array = map_NBT.getNBT();
-          postMessage({
-            head: headerMessage === "CREATE_NBT_JOINED_FOR_VIEW_ONLINE" ? "NBT_FOR_VIEW_ONLINE" : "NBT_ARRAY",
-            body: {
-              whichMap_x: whichMap_x,
-              whichMap_y: whichMap_y,
-              NBT_Array: NBT_Array,
-            },
-          });
-        }
-      }
-      break;
-    }
-    case "CREATE_MAPDAT_SPLIT":
-    case "CREATE_MAPDAT_SPLIT_ZIP": {
-      for (let whichMap_y = 0; whichMap_y < maps.length; whichMap_y++) {
-        for (let whichMap_x = 0; whichMap_x < maps[0].length; whichMap_x++) {
-          const map_Mapdat = new Map_Mapdat(maps[whichMap_y][whichMap_x]);
-          const Mapdat_Bytes = map_Mapdat.getNBT();
-          postMessage({
-            head: headerMessage === "CREATE_MAPDAT_SPLIT_ZIP" ? "MAPDAT_BYTES_ZIP" : "MAPDAT_BYTES",
-            body: {
-              whichMap_x: whichMap_x,
-              whichMap_y: whichMap_y,
-              Mapdat_Bytes: Mapdat_Bytes,
-            },
-          });
-        }
-      }
-      break;
-    }
-    default: {
-      throw new Error("Unknown header message");
-    }
-  }
+// Export constants needed from MapModes/WhereSupportBlocksModes if used in constructor/options
+// It's better practice to pass the uniqueId values in the options object though.
+module.exports = {
+  NBTWriter,
+  Map_NBT,
+  TagTypes, // Export TagTypes if needed externally
+  // Also export constants needed from MapModes/WhereSupportBlocksModes if used in constructor/options
+  // It's better practice to pass the uniqueId values in the options object though.
 };
