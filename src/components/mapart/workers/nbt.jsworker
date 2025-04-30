@@ -9,6 +9,7 @@ var optionValue_supportBlock;
 var pixelsData;
 var maps;
 var currentSelectedBlocks;
+var headerMessage; // Declare headerMessage explicitly
 // end onmessage variables
 
 var exactColourCache = new Map(); // for mapping RGB that exactly matches in coloursJSON to colourSetId and tone
@@ -632,11 +633,15 @@ class Map_NBT {
   }
 
   setNBT_json_size() {
+    // --- BEGIN SIZE ADJUSTMENT ---
+    const height = this.columnHeightsCache.reduce((a, b) => (a > b ? a : b)) + 1;
+    // Always output 16x16 for X and Z in NBT Schematics
     this.NBT_json.value.size.value.value = [
-      this.mapColoursLayout.length,
-      this.columnHeightsCache.reduce((a, b) => (a > b ? a : b)) + 1,
-      this.mapColoursLayout[0].length + 1,
+      16,
+      height, 
+      16
     ];
+    // --- END SIZE ADJUSTMENT ---
   }
 
   getNBT() {
@@ -799,13 +804,24 @@ function mergeMaps() {
 function setupColoursLayoutsFromPixelsData() {
   const mapSize_x = maps[0].length;
   const mapSize_z = maps.length;
+
+  // --- BEGIN DIMENSION ADJUSTMENT ---
+  // Use 16x16 dimensions for NBT, 128x128 for mapdat
+  const isNBT = ["CREATE_NBT_JOINED_FOR_VIEW_ONLINE", "CREATE_NBT_JOINED", "CREATE_NBT_SPLIT"].includes(headerMessage);
+  const dimension = isNBT ? 16 : 128;
+  // --- END DIMENSION ADJUSTMENT ---
+
   for (let whichMap_z = 0; whichMap_z < mapSize_z; whichMap_z++) {
     for (let whichMap_x = 0; whichMap_x < mapSize_x; whichMap_x++) {
       let coloursLayout = [];
-      for (let columnNumber = 0; columnNumber < 128; columnNumber++) {
+      for (let columnNumber = 0; columnNumber < dimension; columnNumber++) { // Use adjusted dimension
         let coloursLayout_columnToPush = [];
-        for (let rowNumber = 0; rowNumber < 128; rowNumber++) {
-          const pixelsData_offset = 4 * (128 * mapSize_x * (128 * whichMap_z + rowNumber) + 128 * whichMap_x + columnNumber);
+        for (let rowNumber = 0; rowNumber < dimension; rowNumber++) { // Use adjusted dimension
+          // Calculate offset based on the *original* potentially larger pixelsData dimensions if mapdat,
+          // or the new 16x16 pixelsData if NBT.
+          const sourceMultimapWidth = isNBT ? 16 : mapSize_x * 128;
+          const pixelsData_offset = 4 * (sourceMultimapWidth * (dimension * whichMap_z + rowNumber) + dimension * whichMap_x + columnNumber);
+
           const colourSetIdAndTone = exactRGBToColourSetIdAndTone([
             pixelsData[pixelsData_offset],
             pixelsData[pixelsData_offset + 1],
@@ -832,14 +848,20 @@ onmessage = (e) => {
   maps = e.data.body.maps;
   currentSelectedBlocks = e.data.body.currentSelectedBlocks;
 
-  const headerMessage = e.data.head;
+  headerMessage = e.data.head; // Assign headerMessage globally for setupColoursLayoutsFromPixelsData
 
   setupExactColourCache();
   setupColoursLayoutsFromPixelsData();
 
+  // --- BEGIN MERGEMAPS CONDITION ADJUSTMENT ---
+  // Only merge if creating JOINED NBT (and maps actually needs merging - which it shouldn't anymore for NBT)
+  // Let's comment this out for now, as mapCanvas now always provides the correct structure for NBT.
+  /*
   if (["CREATE_NBT_JOINED_FOR_VIEW_ONLINE", "CREATE_NBT_JOINED"].includes(headerMessage)) {
     mergeMaps();
   }
+  */
+  // --- END MERGEMAPS CONDITION ADJUSTMENT ---
 
   progressReportHead = `PROGRESS_REPORT_${headerMessage}`;
 

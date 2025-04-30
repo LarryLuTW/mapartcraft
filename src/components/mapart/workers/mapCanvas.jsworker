@@ -187,23 +187,73 @@ function colourSetIdAndToneToRGB(colourSetId, tone) {
 }
 
 function getMapartImageDataAndMaterials() {
-  for (let y = 0; y < optionValue_mapSize_y; y++) {
-    let mapsRowToAdd = [];
-    for (let x = 0; x < optionValue_mapSize_x; x++) {
-      let mapEntryToAdd = { materials: {}, supportBlockCount: 0 };
-      colourSetsToUse.forEach((colourSet) => {
-        mapEntryToAdd.materials[colourSet.colourSetId] = 0;
-      });
-      mapsRowToAdd.push(mapEntryToAdd);
+  // --- BEGIN MAPS INIT ADJUSTMENT ---
+  maps = []; // Reset maps array
+  if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
+    // If NBT, it's always 1x1 after resize
+    let mapEntryToAdd = { materials: {}, supportBlockCount: 0 };
+    colourSetsToUse.forEach((colourSet) => {
+      mapEntryToAdd.materials[colourSet.colourSetId] = 0;
+    });
+    maps.push([mapEntryToAdd]); // Single 1x1 map
+  } else {
+    // Original logic for mapdat (multiple 128x128)
+    for (let y = 0; y < optionValue_mapSize_y; y++) {
+      let mapsRowToAdd = [];
+      for (let x = 0; x < optionValue_mapSize_x; x++) {
+        let mapEntryToAdd = { materials: {}, supportBlockCount: 0 };
+        colourSetsToUse.forEach((colourSet) => {
+          mapEntryToAdd.materials[colourSet.colourSetId] = 0;
+        });
+        mapsRowToAdd.push(mapEntryToAdd);
+      }
+      maps.push(mapsRowToAdd);
     }
-    maps.push(mapsRowToAdd);
   }
+  // --- END MAPS INIT ADJUSTMENT ---
 
   if (colourSetsToUse.length === 0) {
     return;
   }
 
+  // --- BEGIN RESIZE LOGIC ---
+  // Only resize if generating NBT schematic, mapdat requires 128x128
   if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
+    const originalWidth = canvasImageData.width;
+    const originalHeight = canvasImageData.height;
+    const targetWidth = 16;
+    const targetHeight = 16;
+
+    // Create a temporary canvas to draw the original image data
+    const tempCanvas = new OffscreenCanvas(originalWidth, originalHeight);
+    const tempCtx = tempCanvas.getContext("2d");
+    tempCtx.putImageData(canvasImageData, 0, 0);
+
+    // Create the target canvas
+    const resizedCanvas = new OffscreenCanvas(targetWidth, targetHeight);
+    const resizedCtx = resizedCanvas.getContext("2d");
+
+    // Disable image smoothing for nearest-neighbor scaling
+    resizedCtx.imageSmoothingEnabled = false;
+
+    // Draw the original canvas onto the target canvas, resizing it
+    resizedCtx.drawImage(tempCanvas, 0, 0, originalWidth, originalHeight, 0, 0, targetWidth, targetHeight);
+
+    // Get the resized image data
+    canvasImageData = resizedCtx.getImageData(0, 0, targetWidth, targetHeight);
+
+    // Adjust map size options internally for subsequent logic
+    optionValue_mapSize_x = 1;
+    optionValue_mapSize_y = 1;
+
+  }
+  // --- END RESIZE LOGIC ---
+
+  if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
+    // Adjust initial support block count for 16x16 NBT
+    maps[0][0].supportBlockCount = 16; // Noobline for 16 wide
+  } else {
+    // Original logic for mapdat
     maps.forEach((row) =>
       row.forEach((map) => {
         map.supportBlockCount = 128; // initialise with noobline count
@@ -236,16 +286,29 @@ function getMapartImageDataAndMaterials() {
     const indexB = i + 2;
     const indexA = i + 3;
 
-    const multimapWidth = optionValue_mapSize_x * 128;
+    // --- BEGIN INDEXING ADJUSTMENT ---
+    let multimapWidth;
+    let mapWidth;
+    if (optionValue_modeNBTOrMapdat === MapModes.SCHEMATIC_NBT.uniqueId) {
+      multimapWidth = 16; // Always 16 for NBT
+      mapWidth = 16;
+    } else {
+      multimapWidth = optionValue_mapSize_x * 128; // Original logic for mapdat
+      mapWidth = 128;
+    }
+
     const multimap_x = (i / 4) % multimapWidth;
-    const multimap_y = (i / 4 - multimap_x) / multimapWidth;
-    const whichMap_x = Math.floor(multimap_x / 128);
-    const whichMap_y = Math.floor(multimap_y / 128);
-    const individualMap_y = multimap_y % 128;
+    const multimap_y = Math.floor((i / 4) / multimapWidth);
+    const whichMap_x = Math.floor(multimap_x / mapWidth);
+    const whichMap_y = Math.floor(multimap_y / mapWidth);
+    const individualMap_x = multimap_x % mapWidth; // Need this for Bayer dithering etc.
+    const individualMap_y = multimap_y % mapWidth;
+    // --- END INDEXING ADJUSTMENT ---
+
     if (multimap_x === 0) {
       postMessage({
         head: "PROGRESS_REPORT",
-        body: multimap_y / (128 * optionValue_mapSize_y),
+        body: multimap_y / (mapWidth * optionValue_mapSize_y), // Use mapWidth here
       });
     }
 
@@ -281,7 +344,7 @@ function getMapartImageDataAndMaterials() {
           // newPixels = [shortestDistance1, shortestDistance2, newPixel1, newPixel2]
           if (
             (newPixels[0] * (ditherMatrix[0].length * ditherMatrix.length + 1)) / newPixels[1] >
-            ditherMatrix[multimap_x % ditherMatrix[0].length][multimap_y % ditherMatrix.length]
+            ditherMatrix[individualMap_x % ditherMatrix[0].length][individualMap_y % ditherMatrix.length]
           ) {
             closestColourSetIdAndTone = newPixels[3];
           } else {
@@ -400,116 +463,94 @@ function getMapartImageDataAndMaterials() {
           }
           case WhereSupportBlocksModes.IMPORTANT.uniqueId: {
             if (isSupportBlockMandatoryForColourSetIdAndTone(closestColourSetIdAndTone)) {
-              maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+              maps[0][0].supportBlockCount += 1; // Always maps[0][0] for NBT
             }
             break;
           }
           case WhereSupportBlocksModes.ALL_OPTIMIZED.uniqueId: {
-            // for AllOptimized and AllDoubleOptimized we need to know the block south's y-position / does it need support to be able to determine
-            // whether a block needs support underneath; hence we do add support blocks '1-cycle behind' in the for-loop
-            switch (individualMap_y) {
+            switch (individualMap_y) { // Use individualMap_y
               case 0: {
-                // we now know about the first block in the column which allows us to determine noobline support blocks
                 if (
-                  // first under-support block
                   closestColourSetIdAndTone.tone === "dark" ||
                   (closestColourSetIdAndTone.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(closestColourSetIdAndTone))
                 ) {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                  maps[0][0].supportBlockCount += 1;
                 }
                 if (
-                  // second under-support block
                   closestColourSetIdAndTone.tone === "dark" &&
                   isSupportBlockMandatoryForColourSetIdAndTone(closestColourSetIdAndTone)
                 ) {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                  maps[0][0].supportBlockCount += 1;
                 }
                 break;
               }
               case 1: {
-                // first block in column; special since noobline to the North
-                const coloursBlock0_index = i - 4 * 128 * optionValue_mapSize_x; //exactRGBToColourSetIdAndTone
+                const coloursBlock0_index = i - 4 * mapWidth; // Use mapWidth (16 for NBT)
                 const coloursBlock0 = exactRGBToColourSetIdAndTone([
                   canvasImageData.data[coloursBlock0_index],
                   canvasImageData.data[coloursBlock0_index + 1],
                   canvasImageData.data[coloursBlock0_index + 2],
                 ]);
                 if (
-                  // first under-support block
-                  coloursBlock0.tone === "light" ||
-                  closestColourSetIdAndTone.tone === "dark" ||
-                  (closestColourSetIdAndTone.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(closestColourSetIdAndTone)) ||
-                  isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock0)
+                  closestColourSetIdAndTone.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock0)
                 ) {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                  maps[0][0].supportBlockCount += 1;
                 }
                 if (
-                  // second under-support block
-                  closestColourSetIdAndTone.tone === "dark" &&
-                  isSupportBlockMandatoryForColourSetIdAndTone(closestColourSetIdAndTone)
+                  coloursBlock0.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock0)
                 ) {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                  maps[0][0].supportBlockCount += 1;
                 }
                 break;
               }
-              case 127: {
-                // falls through
-                // special case 127 also accounts for final block in column since we are 1-cycle behind in out for-loop; no lookahead.
-                // falls through to default case to also account for block 126 as expected too
-                const penultimateColoursBlock_index = i - 4 * 128 * optionValue_mapSize_x;
-                const penultimateColoursBlock = exactRGBToColourSetIdAndTone([
-                  canvasImageData.data[penultimateColoursBlock_index],
-                  canvasImageData.data[penultimateColoursBlock_index + 1],
-                  canvasImageData.data[penultimateColoursBlock_index + 2],
-                ]);
-                if (
-                  // first under-support block
-                  closestColourSetIdAndTone.tone === "light" ||
-                  isSupportBlockMandatoryForColourSetIdAndTone(closestColourSetIdAndTone) ||
-                  (closestColourSetIdAndTone.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(penultimateColoursBlock))
-                ) {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
-                }
-                if (
-                  // second under-support block
-                  closestColourSetIdAndTone.tone === "light" &&
-                  isSupportBlockMandatoryForColourSetIdAndTone(penultimateColoursBlock)
-                ) {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
-                }
-              }
-              // eslint-disable-next-line no-fallthrough
-              default: {
-                // average block in column
-                const coloursBlock_north_index = i - 4 * 128 * optionValue_mapSize_x * 2;
+              case mapWidth - 1: { // Use mapWidth (16 for NBT)
+                const coloursBlock_north_index = i - 4 * mapWidth; // Use mapWidth
                 const coloursBlock_north = exactRGBToColourSetIdAndTone([
                   canvasImageData.data[coloursBlock_north_index],
                   canvasImageData.data[coloursBlock_north_index + 1],
                   canvasImageData.data[coloursBlock_north_index + 2],
                 ]);
-                const coloursBlock_index = i - 4 * 128 * optionValue_mapSize_x;
-                const coloursBlock = exactRGBToColourSetIdAndTone([
-                  canvasImageData.data[coloursBlock_index],
-                  canvasImageData.data[coloursBlock_index + 1],
-                  canvasImageData.data[coloursBlock_index + 2],
+                if (
+                  closestColourSetIdAndTone.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north)
+                ) {
+                  maps[0][0].supportBlockCount += 1;
+                }
+                if (closestColourSetIdAndTone.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north)) {
+                  maps[0][0].supportBlockCount += 1;
+                }
+                // falls through
+              }
+              // eslint-disable-next-line no-fallthrough
+              default: {
+                const coloursBlock_north_index = i - 4 * mapWidth * 2; // Use mapWidth
+                const coloursBlock_inQuestion_index = i - 4 * mapWidth; // Use mapWidth
+                const coloursBlock_north = exactRGBToColourSetIdAndTone([
+                  canvasImageData.data[coloursBlock_north_index],
+                  canvasImageData.data[coloursBlock_north_index + 1],
+                  canvasImageData.data[coloursBlock_north_index + 2],
                 ]);
-                const coloursBlock_south = closestColourSetIdAndTone;
+                const coloursBlock_inQuestion = exactRGBToColourSetIdAndTone([
+                  canvasImageData.data[coloursBlock_inQuestion_index],
+                  canvasImageData.data[coloursBlock_inQuestion_index + 1],
+                  canvasImageData.data[coloursBlock_inQuestion_index + 2],
+                ]);
+                const coloursBlock = closestColourSetIdAndTone; // This is the current block (south relative to inQuestion)
                 if (
                   // first under-support block
-                  coloursBlock.tone === "light" ||
-                  coloursBlock_south.tone === "dark" ||
-                  (coloursBlock_south.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_south)) ||
-                  isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock) ||
-                  (coloursBlock.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north))
+                  coloursBlock_inQuestion.tone === "light" ||
+                  coloursBlock.tone === "dark" ||
+                  isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_inQuestion) ||
+                  (coloursBlock.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock)) ||
+                  (coloursBlock_inQuestion.tone === "normal" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north))
                 ) {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                  maps[0][0].supportBlockCount += 1;
                 }
                 if (
                   // second under-support block
-                  (coloursBlock_south.tone === "dark" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_south)) ||
-                  (coloursBlock.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north))
+                  (coloursBlock.tone === "dark" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock)) ||
+                  (coloursBlock_inQuestion.tone === "light" && isSupportBlockMandatoryForColourSetIdAndTone(coloursBlock_north))
                 ) {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                  maps[0][0].supportBlockCount += 1;
                 }
                 break;
               }
@@ -517,33 +558,33 @@ function getMapartImageDataAndMaterials() {
             break;
           }
           case WhereSupportBlocksModes.ALL_DOUBLE_OPTIMIZED.uniqueId: {
-            switch (individualMap_y) {
+            switch (individualMap_y) { // Use individualMap_y
               case 0: {
-                // noobline
-                maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                maps[0][0].supportBlockCount += 1;
                 if (closestColourSetIdAndTone.tone === "dark") {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                  maps[0][0].supportBlockCount += 1;
                 }
                 break;
               }
-              case 127: {
-                // falls through
-                maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+              case mapWidth - 1: { // Use mapWidth (16 for NBT)
+                maps[0][0].supportBlockCount += 1;
                 if (closestColourSetIdAndTone.tone === "light") {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                  maps[0][0].supportBlockCount += 1;
                 }
+                // falls through
               }
               // eslint-disable-next-line no-fallthrough
               default: {
-                maps[whichMap_y][whichMap_x].supportBlockCount += 1;
-                const coloursBlock_north_index = i - 4 * 128 * optionValue_mapSize_x;
-                const coloursBlock_north = exactRGBToColourSetIdAndTone([
-                  canvasImageData.data[coloursBlock_north_index],
-                  canvasImageData.data[coloursBlock_north_index + 1],
-                  canvasImageData.data[coloursBlock_north_index + 2],
+                maps[0][0].supportBlockCount += 1;
+                const coloursBlock_inQuestion_index = i - 4 * mapWidth; // Use mapWidth
+                const coloursBlock_inQuestion = exactRGBToColourSetIdAndTone([
+                  canvasImageData.data[coloursBlock_inQuestion_index],
+                  canvasImageData.data[coloursBlock_inQuestion_index + 1],
+                  canvasImageData.data[coloursBlock_inQuestion_index + 2],
                 ]);
-                if (coloursBlock_north.tone === "light" || closestColourSetIdAndTone.tone === "dark") {
-                  maps[whichMap_y][whichMap_x].supportBlockCount += 1;
+                const coloursBlock = closestColourSetIdAndTone; // Current block
+                if (coloursBlock_inQuestion.tone === "light" || coloursBlock.tone === "dark") {
+                  maps[0][0].supportBlockCount += 1;
                 }
                 break;
               }
@@ -551,9 +592,15 @@ function getMapartImageDataAndMaterials() {
             break;
           }
           default: {
-            break;
+            throw new Error("Unknown support-blocks option");
           }
         }
+      }
+      // END support-block count
+
+      // materials count
+      if (closestColourSetIdAndTone.colourSetId !== "-1") {
+        // -1 is transparent for mapdats, ignore
         maps[whichMap_y][whichMap_x].materials[closestColourSetIdAndTone.colourSetId] += 1;
       }
     }
