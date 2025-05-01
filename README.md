@@ -1,34 +1,60 @@
-# MapartCraft
+# MapartCraft CLI
 
-A Minecraft mapart schematic and map.dat generator, designed to be feasible for both server admins and survival players on servers like 2b2t, running in your browser.
+This tool generates 16x16 Minecraft map art NBT schematics from image files via the command line. It uses the core logic from the MapartCraft web application.
 
-# Requirements
+## Requirements
 
-MapartCraft is a static website written in ReactJS; running and building requires NPM / Node. Extra scripts in `tools` are written in Python3. `tools/addColoursJSONBlock.py` optionally uses [ImageMagick](https://imagemagick.org/) to manage `src/images/textures.png`.
+*   [Node.js](https://nodejs.org/) v14.x is required for this project.
 
-# Building
+## Installation
 
-1. Acquire packages with `npm install`.
-2. Build using `npm run build`, or run a debug version with `npm run start`.
-3. Alternatively use the shell script `build.sh` for deployment on Linux. This will also copy a `.htaccess` file to the build folder for use with Apache.
+1.  Clone or download the repository.
+2.  Navigate to the project root directory (`mapartcraft`) in your terminal.
+3.  Install the necessary dependencies:
+    ```bash
+    npm install
+    ```
+    This will install libraries like `sharp` (for image processing) and `yargs` (for argument parsing). Note: You might see warnings during installation if your Node.js version is older, but the script may still work.
 
-The default build settings assume the app is being hosted at https://YOUR-SITE-HERE.com/mapartcraft. To change the folder from which the site is hosted modify the following:
+## Usage
 
-- `homepage` in `package.json`
-- `basename` in the Router in `src/app.js`
-- The `RewriteRule` in `buildSources/apache/.htaccess` if using Apache
+The primary script is `mapart-cli.js` located in the project root.
 
-# Usage
+1.  Make the script executable (only needs to be done once):
+    ```bash
+    chmod +x mapart-cli.js
+    ```
+2.  Run the script:
+    ```bash
+    ./mapart-cli.js --image <path_to_input_image> --output <path_for_output.nbt> [options]
+    ```
 
-Visit [MapartCraft](https://rebane2001.com/mapartcraft) on [rebane2001.com](https://rebane2001.com) or use a mirror on [web.archive.org](https://web.archive.org/web/*/https://rebane2001.com/mapartcraft). However, it is recommended to use the [rebane2001.com](https://rebane2001.com/mapartcraft) site as it is always up to date with new features and bugfixes.
+### Arguments
 
-# Credits/Thanks
+*   `--image` (`-i`): **Required.** Path to the input image file (e.g., `my_picture.png`).
+*   `--output` (`-o`): **Required.** Path where the output NBT schematic file should be saved (e.g., `output/my_map.nbt`).
+*   `--mcversion`: Target Minecraft version key. Determines available blocks. (Default: `1_20`, Optional). Examples: `1_19`, `1_18_2`, `1_16_5`, etc. See `src/components/mapart/json/supportedVersions.json` for all keys.
+*   `--staircasing`: Staircasing mode for 3D structure. (Default: `VALLEY`). Choices: `OFF`, `CLASSIC`, `VALLEY`, `FULL_DARK`, `FULL_LIGHT`.
+*   `--dithering`: Dithering algorithm. (Default: `FloydSteinberg`). Choices: `None`, `FloydSteinberg`, `Bayer44`, `Bayer22`, `Ordered33`, `MinAvgErr`, `Burkes`, `SierraLite`, `Stucki`, `Atkinson`.
+*   `--supportBlock`: NBT name for the support block used. (Default: `cobblestone`). Example: `minecraft:stone`, `netherrack`.
+*   `--supportMode`: How support blocks are placed. (Default: `ALL_OPTIMIZED`). Choices: `NONE`, `ALL`, `ALL_OPTIMIZED`, `MANDATORY_ONLY`.
+*   `--betterColour`: Use more accurate LAB colour comparison (`true`) or faster RGB (`false`). (Default: `true`).
+*   `--help` (`-h`): Show help message listing all options.
 
-- Minecraft for the block textures
-- [KenPixel Mini Square](https://opengameart.org/content/kenney-fonts) font by [Kenney](https://www.kenney.nl/)
-- [pako](https://www.npmjs.com/package/pako)'s zipping library
-- [jszip](https://www.npmjs.com/package/jszip)'s zipping library
-- [OpenMoji](https://github.com/hfg-gmuend/openmoji) for flags
-- Translation credits can be seen on the translated pages
-- [SelfAdjointOperator](https://github.com/SelfAdjointOperator) for some extra features
-- Code contributors can be seen on the [contributions page](https://github.com/rebane2001/mapartcraft/graphs/contributors)
+### Example
+
+To generate a map art schematic for Minecraft 1.20 (the default) from `input.jpg` and save it as `mymap.nbt` in the `output` directory:
+
+```bash
+./mapart-cli.js --image input.jpg --output output/mymap.nbt
+```
+
+To generate for Minecraft 1.16.5 using classic staircasing and no dithering:
+
+```bash
+./mapart-cli.js --image logo.png --output maps/logo_1.16.nbt --mcversion 1_16_5 --staircasing CLASSIC --dithering None
+```
+
+## Credits
+
+Based on the MapartCraft web application by rebane2001 and contributors. Uses textures from Minecraft.
