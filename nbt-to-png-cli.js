@@ -6,12 +6,7 @@ const zlib = require('zlib');
 const sharp = require('sharp');
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
-
-// For ES6 import compatibility, we'll need to load NBTReader differently
-async function loadNBTReader() {
-  const module = await import('./src/components/mapart/nbtReader.js');
-  return module.default;
-}
+const NBTReader = require('./src/components/mapart/nbtReader.js');
 
 // --- Configuration and Argument Parsing ---
 
@@ -297,10 +292,7 @@ async function run() {
     console.log(`Output file: ${argv.output}`);
     console.log(`Extract tone: ${argv.extractTone}`);
 
-    // 1. Load NBTReader class
-    const NBTReader = await loadNBTReader();
-
-    // 2. Read and decompress NBT file
+    // 1. Read and decompress NBT file
     console.log('Reading NBT file...');
     if (!fs.existsSync(argv.nbt)) {
       throw new Error(`NBT file not found: ${argv.nbt}`);
@@ -309,7 +301,7 @@ async function run() {
     const compressedData = fs.readFileSync(argv.nbt);
     const decompressedData = zlib.gunzipSync(compressedData);
     
-    // 3. Parse NBT data
+    // 2. Parse NBT data
     console.log('Parsing NBT structure...');
     const nbtReader = new NBTReader();
     nbtReader.loadBuffer(decompressedData.buffer);
@@ -317,19 +309,19 @@ async function run() {
     
     console.log(`NBT structure name: ${nbtData.name}`);
     
-    // 4. Create block to color mapping
+    // 3. Create block to color mapping
     console.log('Creating block to color mapping...');
     const blockToColorMapping = createBlockToColorMapping(coloursJSON, optionValue_version);
     console.log(`Found ${blockToColorMapping.size} unique block types in color database`);
     
-    // 5. Extract pixel layout from NBT
+    // 4. Extract pixel layout from NBT
     const pixels = extractPixelLayout(nbtData, blockToColorMapping, argv.extractTone);
     
-    // 6. Convert to image buffer
+    // 5. Convert to image buffer
     console.log('Converting to image...');
     const imageBuffer = pixelsToBuffer(pixels);
     
-    // 7. Save as PNG
+    // 6. Save as PNG
     console.log('Saving PNG file...');
     const outputDir = path.dirname(argv.output);
     if (!fs.existsSync(outputDir)) {

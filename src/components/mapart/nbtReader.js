@@ -160,4 +160,4 @@ class NBTReader {
   }
 }
 
-export default NBTReader;
+module.exports = NBTReader;
