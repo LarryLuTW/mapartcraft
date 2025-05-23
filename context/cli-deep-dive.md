@@ -1,8 +1,15 @@
-# CLI Deep Dive: How mapart-cli.js Works
+# CLI Deep Dive: How CLI Tools Work
 
 ## Overview
 
-The `mapart-cli.js` tool is a Node.js command-line application that converts any image file into a Minecraft NBT schematic file containing a 16x16 block structure suitable for display on in-game maps. This document provides a comprehensive technical analysis of how the CLI tool works.
+MapartCraft provides two command-line tools:
+
+1. **`mapart-cli.js`**: Converts any image file into a Minecraft NBT schematic file containing a 16x16 block structure suitable for display on in-game maps.
+2. **`nbt-to-png-cli.js`**: Extracts 16x16 PNG images from NBT schematic files, providing the reverse operation.
+
+This document provides a comprehensive technical analysis of how both CLI tools work.
+
+# Image-to-NBT CLI (`mapart-cli.js`)
 
 ## Entry Point and Structure
 
@@ -255,6 +262,253 @@ if (!fs.existsSync(outputDir)){
 }
 fs.writeFileSync(argv.output, compressedNbt);
 ```
+
+# NBT-to-PNG CLI (`nbt-to-png-cli.js`)
+
+## Overview
+
+The NBT-to-PNG CLI provides the reverse operation of the image-to-NBT CLI. It reads NBT schematic files and extracts them back into 16x16 PNG images, allowing users to visualize the map art or verify conversion results.
+
+## Entry Point and Structure
+
+### Script Setup
+```javascript
+#!/usr/bin/env node
+```
+- Same shebang setup as image-to-NBT CLI
+- Uses ES6 dynamic imports for NBTReader compatibility
+
+### Core Dependencies
+```javascript
+const fs = require('fs');           // File system operations
+const path = require('path');       // Path manipulation
+const zlib = require('zlib');       // Gzip decompression
+const sharp = require('sharp');     // PNG generation
+const yargs = require('yargs/yargs'); // CLI argument parsing
+```
+
+### ES6 Import Handling
+```javascript
+async function loadNBTReader() {
+  const module = await import('./src/components/mapart/nbtReader.js');
+  return module.default;
+}
+```
+
+## Command Line Interface
+
+### Argument Definition
+```javascript
+const parser = yargs(hideBin(process.argv))
+  .usage('Usage: $0 --nbt <path> --output <path> [--mcversion <mc_version_key>] [options]')
+```
+
+#### Required Arguments
+- `--nbt` (`-n`): Input NBT schematic file path
+- `--output` (`-o`): Output PNG file path
+
+#### Configuration Arguments
+- `--mcversion`: Target Minecraft version for block interpretation (default: "1_20")
+- `--extractTone`: Tone extraction mode (default: "auto")
+
+### Tone Extraction Modes
+- **`auto`**: Automatically determine tone based on block height (recommended)
+- **`normal`**: Extract base colors only
+- **`light`**: Extract light tones (for raised blocks)
+- **`dark`**: Extract dark tones (for lowered blocks)
+
+## NBT Processing Pipeline
+
+### Step 1: NBT Reading and Decompression
+```javascript
+const compressedData = fs.readFileSync(argv.nbt);
+const decompressedData = zlib.gunzipSync(compressedData);
+
+const nbtReader = new NBTReader();
+nbtReader.loadBuffer(decompressedData.buffer);
+const nbtData = nbtReader.getData();
+```
+
+### Step 2: Block-to-Color Mapping Creation
+```javascript
+function createBlockToColorMapping(coloursJSON, targetVersion) {
+  const blockToColor = new Map();
+  
+  for (const [colourSetId, colourSet] of Object.entries(coloursJSON)) {
+    for (const [blockId, blockData] of Object.entries(colourSet.blocks)) {
+      // Check version compatibility and handle references
+      let versionData = blockData.validVersions[targetVersion.MCVersion];
+      
+      // Resolve version references (e.g., "&1.12.2")
+      while (typeof versionData === 'string' && versionData.startsWith('&')) {
+        const referencedVersion = versionData.slice(1);
+        versionData = blockData.validVersions[referencedVersion];
+      }
+      
+      if (versionData && typeof versionData === 'object' && versionData.NBTName) {
+        const blockName = `minecraft:${versionData.NBTName}`;
+        if (!blockToColor.has(blockName)) {
+          blockToColor.set(blockName, []);
+        }
+        blockToColor.get(blockName).push({
+          colourSetId,
+          blockId,
+          properties: versionData.NBTArgs || {}
+        });
+      }
+    }
+  }
+  
+  return blockToColor;
+}
+```
+
+### Step 3: Physical Layout Extraction
+```javascript
+function extractPixelLayout(nbtData, blockToColorMapping, toneMode) {
+  // Parse NBT structure
+  const palette = nbtData.value.palette.value.value;
+  const blocks = nbtData.value.blocks.value.value;
+  const size = nbtData.value.size.value.value; // [width, height, depth]
+  
+  // Create physical layout of all blocks
+  const physicalLayout = blocks.map(block => {
+    const pos = block.pos.value.value;
+    const state = block.state.value;
+    const paletteEntry = palette[state];
+    
+    return {
+      x: pos[0],
+      y: pos[1], 
+      z: pos[2],
+      blockName: paletteEntry.Name.value,
+      properties: paletteEntry.Properties ? 
+        Object.fromEntries(
+          Object.entries(paletteEntry.Properties.value).map(([k, v]) => [k, v.value])
+        ) : {}
+    };
+  });
+}
+```
+
+### Step 4: Tone Determination
+```javascript
+function determineToneFromHeight(x, z, physicalLayout, toneMode) {
+  if (toneMode !== 'auto') {
+    return toneMode;
+  }
+  
+  // Auto mode: analyze the structure to determine tone based on height
+  const baseHeight = 0; // Assume y=0 is the base level
+  let blockHeight = null;
+  
+  // Find the block at this x,z position
+  for (const block of physicalLayout) {
+    if (block.x === x && block.z === z) {
+      blockHeight = block.y;
+      break;
+    }
+  }
+  
+  if (blockHeight === null) {
+    return 'normal'; // Default fallback
+  }
+  
+  if (blockHeight > baseHeight) {
+    return 'light'; // Raised blocks -> light tone
+  } else if (blockHeight < baseHeight) {
+    return 'dark'; // Lowered blocks -> dark tone
+  } else {
+    return 'normal'; // Base level -> normal tone
+  }
+}
+```
+
+### Step 5: Color Extraction and PNG Generation
+```javascript
+// Map each x,z position to the appropriate color
+for (let x = 0; x < 16; x++) {
+  for (let z = 0; z < 16; z++) {
+    // Find topmost non-air block at this position
+    const blocksAtPosition = physicalLayout.filter(block => 
+      block.x === x && block.z === z
+    ).sort((a, b) => b.y - a.y);
+    
+    // Match block to color and determine appropriate tone
+    const colorMatch = matchBlockProperties(targetBlock, candidateColors, targetBlock.properties);
+    const tone = determineToneFromHeight(x, z, physicalLayout, toneMode);
+    
+    // Extract RGB color for this tone
+    const colourSet = coloursJSON[colorMatch.colourSetId];
+    const rgb = colourSet.tonesRGB[tone] || colourSet.tonesRGB.normal;
+    
+    pixels[z][x] = { r: rgb[0], g: rgb[1], b: rgb[2], a: 255 };
+  }
+}
+```
+
+### Step 6: PNG File Output
+```javascript
+const imageBuffer = pixelsToBuffer(pixels);
+
+await sharp(imageBuffer, {
+  raw: {
+    width: 16,
+    height: 16,
+    channels: 4
+  }
+})
+.png()
+.toFile(argv.output);
+```
+
+## Error Handling Strategy
+
+### Validation Errors
+- Invalid command line arguments result in help display and exit code 1
+- Missing NBT files or corrupt format cause immediate termination
+- Version compatibility issues are reported with context
+
+### Processing Errors
+- NBT parsing failures are caught and reported with diagnostic information
+- Block mapping failures fall back to magenta pixels for visibility
+- PNG generation errors include filesystem feedback
+
+### Graceful Degradation
+- Unknown blocks are rendered as magenta for easy identification
+- Missing tones fall back to normal tone with warning
+- Invalid height data defaults to normal tone
+
+## Performance Characteristics
+
+### Memory Usage
+- NBT files loaded entirely into memory for parsing
+- 16x16 pixel array (1KB) for final image
+- Block mapping cache uses Map data structures for O(1) lookups
+
+### Computational Complexity
+- NBT parsing: O(n) where n = number of blocks in structure
+- Block mapping: O(m) where m = block types in palette
+- Pixel extraction: O(256) for 16x16 output
+
+### I/O Operations
+- Single NBT file read with gzip decompression
+- Sequential configuration file loading
+- Single PNG file write for output
+
+## CLI Success Flow Summary
+
+1. **Argument Parsing**: Validate and normalize user inputs
+2. **NBT Loading**: Read and decompress gzipped NBT file
+3. **NBT Parsing**: Extract palette, blocks, and structure metadata
+4. **Block Mapping**: Create mapping from block names to color sets
+5. **Layout Extraction**: Build 3D physical layout of all blocks
+6. **Tone Analysis**: Determine appropriate color tone for each position
+7. **Color Extraction**: Map blocks to RGB values based on tone
+8. **PNG Generation**: Create 16x16 PNG image using Sharp
+9. **File Output**: Write PNG file to specified location
+
+The entire process typically completes in under a second for a 16x16 structure, making it suitable for both interactive use and batch processing scenarios.
 
 ## Error Handling Strategy
 

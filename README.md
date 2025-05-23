@@ -1,60 +1,138 @@
-# MapartCraft CLI
+# MapartCraft
 
-This tool generates 16x16 Minecraft map art NBT schematics from image files via the command line. It uses the core logic from the MapartCraft web application.
+MapartCraft is a tool for creating Minecraft map art from images. It provides both a web interface and command-line tools for converting images to NBT schematics and map.dat files.
 
-## Requirements
+## Features
 
-*   [Node.js](https://nodejs.org/) v14.x is required for this project.
+- **Image to NBT Conversion**: Convert any image to a 16x16 Minecraft schematic
+- **NBT to Image Conversion**: Extract images from existing NBT schematics  
+- **Multiple Minecraft Versions**: Support for Minecraft 1.12.2 through 1.20+
+- **Advanced Color Processing**: LAB color space matching for perceptually accurate results
+- **Dithering Algorithms**: Multiple dithering methods including Floyd-Steinberg, Bayer matrices
+- **3D Staircasing**: Create depth effects with raised and lowered blocks
+- **Web Interface**: User-friendly browser-based editor with 3D preview
+
+## Command Line Tools
+
+### Image to NBT Conversion
+
+Convert images to Minecraft NBT schematic files:
+
+```bash
+./mapart-cli.js --image input.png --output output.nbt [options]
+```
+
+**Options:**
+- `--image, -i`: Input image file path (required)
+- `--output, -o`: Output NBT file path (required)  
+- `--mcversion`: Minecraft version ("1_20", "1_19", etc.) [default: "1_20"]
+- `--staircasing`: 3D effect mode ("OFF", "CLASSIC", "VALLEY", "FULL_DARK", "FULL_LIGHT") [default: "VALLEY"]
+- `--dithering`: Dithering algorithm ("None", "FloydSteinberg", "Bayer44", etc.) [default: "FloydSteinberg"]
+- `--supportBlock`: Support block type [default: "cobblestone"]
+- `--supportMode`: Support placement ("NONE", "ALL", "ALL_OPTIMIZED", "MANDATORY_ONLY") [default: "ALL_OPTIMIZED"]
+- `--betterColour`: Use LAB color space (true/false) [default: true]
+
+**Example:**
+```bash
+./mapart-cli.js --image photo.jpg --output my-mapart.nbt --mcversion 1_20 --staircasing VALLEY
+```
+
+### NBT to Image Conversion
+
+Extract 16x16 PNG images from NBT schematic files:
+
+```bash
+./nbt-to-png-cli.js --nbt input.nbt --output output.png [options]
+```
+
+**Options:**
+- `--nbt, -n`: Input NBT schematic file path (required)
+- `--output, -o`: Output PNG file path (required)
+- `--mcversion`: Minecraft version for block interpretation [default: "1_20"]  
+- `--extractTone`: Tone extraction mode ("normal", "light", "dark", "auto") [default: "auto"]
+
+**Tone Extraction Modes:**
+- `auto`: Automatically determine tone based on block height (recommended)
+- `normal`: Extract base colors only
+- `light`: Extract light tones (for raised blocks)
+- `dark`: Extract dark tones (for lowered blocks)
+
+**Example:**
+```bash
+./nbt-to-png-cli.js --nbt my-mapart.nbt --output extracted-image.png --extractTone auto
+```
 
 ## Installation
 
-1.  Clone or download the repository.
-2.  Navigate to the project root directory (`mapartcraft`) in your terminal.
-3.  Install the necessary dependencies:
-    ```bash
-    npm install
-    ```
-    This will install libraries like `sharp` (for image processing) and `yargs` (for argument parsing). Note: You might see warnings during installation if your Node.js version is older, but the script may still work.
+### Prerequisites
+- Node.js 14.x or higher
+- npm
 
-## Usage
-
-The primary script is `mapart-cli.js` located in the project root.
-
-1.  Make the script executable (only needs to be done once):
-    ```bash
-    chmod +x mapart-cli.js
-    ```
-2.  Run the script:
-    ```bash
-    ./mapart-cli.js --image <path_to_input_image> --output <path_for_output.nbt> [options]
-    ```
-
-### Arguments
-
-*   `--image` (`-i`): **Required.** Path to the input image file (e.g., `my_picture.png`).
-*   `--output` (`-o`): **Required.** Path where the output NBT schematic file should be saved (e.g., `output/my_map.nbt`).
-*   `--mcversion`: Target Minecraft version key. Determines available blocks. (Default: `1_20`, Optional). Examples: `1_19`, `1_18_2`, `1_16_5`, etc. See `src/components/mapart/json/supportedVersions.json` for all keys.
-*   `--staircasing`: Staircasing mode for 3D structure. (Default: `VALLEY`). Choices: `OFF`, `CLASSIC`, `VALLEY`, `FULL_DARK`, `FULL_LIGHT`.
-*   `--dithering`: Dithering algorithm. (Default: `FloydSteinberg`). Choices: `None`, `FloydSteinberg`, `Bayer44`, `Bayer22`, `Ordered33`, `MinAvgErr`, `Burkes`, `SierraLite`, `Stucki`, `Atkinson`.
-*   `--supportBlock`: NBT name for the support block used. (Default: `cobblestone`). Example: `minecraft:stone`, `netherrack`.
-*   `--supportMode`: How support blocks are placed. (Default: `ALL_OPTIMIZED`). Choices: `NONE`, `ALL`, `ALL_OPTIMIZED`, `MANDATORY_ONLY`.
-*   `--betterColour`: Use more accurate LAB colour comparison (`true`) or faster RGB (`false`). (Default: `true`).
-*   `--help` (`-h`): Show help message listing all options.
-
-### Example
-
-To generate a map art schematic for Minecraft 1.20 (the default) from `input.jpg` and save it as `mymap.nbt` in the `output` directory:
-
+### Setup
 ```bash
-./mapart-cli.js --image input.jpg --output output/mymap.nbt
+git clone https://github.com/rebane2001/mapartcraft.git
+cd mapartcraft
+npm install
 ```
 
-To generate for Minecraft 1.16.5 using classic staircasing and no dithering:
-
+### Make CLI tools executable
 ```bash
-./mapart-cli.js --image logo.png --output maps/logo_1.16.nbt --mcversion 1_16_5 --staircasing CLASSIC --dithering None
+chmod +x mapart-cli.js nbt-to-png-cli.js
 ```
 
-## Credits
+## Web Interface
 
-Based on the MapartCraft web application by rebane2001 and contributors. Uses textures from Minecraft.
+Start the development server:
+```bash
+npm start
+```
+
+Build for production:
+```bash
+npm run build
+```
+
+## Supported Formats
+
+### Input Formats (Image to NBT)
+- PNG, JPEG, WebP, TIFF, GIF, SVG
+- Automatically resized to 16x16 pixels
+
+### Output Formats
+- **NBT Schematics**: 3D structures compatible with WorldEdit, MCEdit
+- **PNG Images**: Standard 16x16 pixel images
+
+### Minecraft Versions
+- 1.20+, 1.19, 1.18, 1.17, 1.16, 1.15, 1.14, 1.13, 1.12.2
+
+## Technical Details
+
+### Color Processing
+- 269KB block color database with ~8,500 block definitions
+- LAB color space conversion for perceptually accurate matching
+- Multiple dithering algorithms to improve visual quality
+- Support for transparency in map.dat format
+
+### NBT Structure
+- Gzipped binary NBT format
+- 16x16 base with configurable height variations
+- Automatic palette generation and optimization
+- Support block placement for structural integrity
+
+### Performance
+- CLI processing typically completes in under 1 second
+- Memory-efficient buffer management
+- Optimized color lookup caches
+
+## License
+
+MIT License - see LICENSE file for details.
+
+## Contributing
+
+Contributions welcome! Please read the contributing guidelines and submit pull requests.
+
+## Links
+
+- **Web Version**: [rebane2001.com/mapartcraft](https://rebane2001.com/mapartcraft)
+- **GitHub**: [github.com/rebane2001/mapartcraft](https://github.com/rebane2001/mapartcraft)
