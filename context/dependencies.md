@@ -84,8 +84,7 @@
 ## System Dependencies
 
 ### Node.js Runtime
-- **Minimum Version**: Node.js 14.x
-- **Recommended**: Node.js 16.x or later
+- **Version**: Node.js 22.x (v22.15.1 verified working)
 - **LTS Policy**: Use current LTS version for production
 - **Native Modules**: Required for Sharp compilation
 

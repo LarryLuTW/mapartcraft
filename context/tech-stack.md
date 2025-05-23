@@ -3,7 +3,7 @@
 ## Core Languages and Runtime
 
 ### JavaScript (Node.js)
-- **Version**: Requires Node.js v14.x+
+- **Version**: Requires Node.js v22.x+
 - **Runtime Environment**: Node.js for CLI, Browser for web interface
 - **Standard**: ES6+ features used throughout
 
