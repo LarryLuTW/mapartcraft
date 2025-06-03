@@ -11,13 +11,58 @@ const { hideBin } = require('yargs/helpers');
 const { processImageData } = require('./src/components/mapart/workers/mapCanvas.jsworker');
 const { Map_NBT, NBTWriter, TagTypes } = require('./src/components/mapart/workers/nbt.jsworker'); // Assuming Map_NBT requires TagTypes, maybe WhereSupportBlocksModes, MapModes
 
+// --- Utility Functions ---
+
+// Function to check if a string is a valid URL
+function isValidUrl(string) {
+  try {
+    const url = new URL(string);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
+// Function to download image from URL
+async function downloadImage(url) {
+  console.log(`Downloading image from URL: ${url}`);
+  
+  try {
+    // Check if fetch is available (Node.js 18+)
+    if (typeof fetch === 'undefined') {
+      throw new Error('URL support requires Node.js 18+ or installing node-fetch. Please upgrade Node.js or use a local file.');
+    }
+    
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.startsWith('image/')) {
+      console.warn(`Warning: Content-Type is "${contentType}", expected an image type`);
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    console.log(`Successfully downloaded ${buffer.length} bytes`);
+    return buffer;
+  } catch (error) {
+    throw new Error(`Failed to download image from URL: ${error.message}`);
+  }
+}
+
 // --- Configuration and Argument Parsing ---
 
 const parser = yargs(hideBin(process.argv))
-  .usage('Usage: $0 --image <path> --output <path> [--mcversion <mc_version_key>] [options]')
+  .usage('Usage: $0 --image <path_or_url> --output <path> [--mcversion <mc_version_key>] [options]')
+  .example('$0 -i ./my-image.png -o ./output.nbt', 'Convert local image file')
+  .example('$0 -i "https://example.com/image.png" -o ./output.nbt', 'Convert image from URL')
   .option('image', {
     alias: 'i',
-    description: 'Path to the input image file',
+    description: 'Path to the input image file or URL to an image',
     type: 'string',
     demandOption: true,
   })
@@ -123,7 +168,7 @@ if (!selectedSupportMode) {
 }
 const optionValue_whereSupportBlocks = selectedSupportMode.uniqueId;
 
-// --- Helper Functions ---
+// --- Processing Helper Functions ---
 
 // Recreate exact colour cache setup (needed for mapping processed pixels back to colourSetId/tone)
 function setupExactColourCache(cJSON) {
@@ -198,7 +243,18 @@ async function run() {
 
     // 2. Image Processing (Load, Resize, Get Raw Pixels)
     console.log('Resizing image to 16x16 (nearest neighbor)...');
-    const { data: rgbaBuffer, info } = await sharp(argv.image)
+    
+    let imageInput;
+    if (isValidUrl(argv.image)) {
+      // Download image from URL
+      const imageBuffer = await downloadImage(argv.image);
+      imageInput = imageBuffer;
+    } else {
+      // Use local file path
+      imageInput = argv.image;
+    }
+    
+    const { data: rgbaBuffer, info } = await sharp(imageInput)
       .resize(16, 16, { kernel: sharp.kernel.nearest })
       .ensureAlpha() // Ensure 4 channels (RGBA)
       .raw()

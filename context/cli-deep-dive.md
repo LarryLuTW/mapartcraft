@@ -40,7 +40,7 @@ const parser = yargs(hideBin(process.argv))
 ```
 
 #### Required Arguments
-- `--image` (`-i`): Input image file path
+- `--image` (`-i`): Input image file path or URL (supports HTTP/HTTPS)
 - `--output` (`-o`): Output NBT file path
 
 #### Configuration Arguments
@@ -130,7 +130,17 @@ if (defaultBlockId === "-1" && minPresetIndex === Infinity) {
 
 ### Step 1: Image Loading and Preprocessing
 ```javascript
-const { data: rgbaBuffer, info } = await sharp(argv.image)
+let imageInput;
+if (isValidUrl(argv.image)) {
+  // Download image from URL
+  const imageBuffer = await downloadImage(argv.image);
+  imageInput = imageBuffer;
+} else {
+  // Use local file path
+  imageInput = argv.image;
+}
+
+const { data: rgbaBuffer, info } = await sharp(imageInput)
   .resize(16, 16, { kernel: sharp.kernel.nearest })
   .ensureAlpha() // Ensure 4 channels (RGBA)
   .raw()
@@ -138,6 +148,8 @@ const { data: rgbaBuffer, info } = await sharp(argv.image)
 ```
 
 **Key Details:**
+- Automatically detects and downloads images from HTTP/HTTPS URLs
+- Falls back to local file paths for existing functionality
 - Forces 16x16 pixel size for NBT compatibility
 - Uses nearest neighbor interpolation to preserve pixel art aesthetics
 - Ensures RGBA format (4 bytes per pixel)
