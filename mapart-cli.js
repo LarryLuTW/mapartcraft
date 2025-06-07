@@ -254,8 +254,10 @@ async function run() {
       imageInput = argv.image;
     }
     
+    console.log('Flattening transparent background...');
     const { data: rgbaBuffer, info } = await sharp(imageInput)
       .resize(16, 16, { kernel: sharp.kernel.nearest })
+      .flatten({ background: { r: 153, g: 153, b: 153 } }) // Flatten transparency to grey
       .ensureAlpha() // Ensure 4 channels (RGBA)
       .raw()
       .toBuffer({ resolveWithObject: true });
