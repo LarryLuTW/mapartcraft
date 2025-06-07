@@ -30,37 +30,15 @@ To enable custom color schemes, a new feature would need to be added to the CLI 
 
 This enhancement would provide full control over the artistic direction of the generated map art.
 
-## Setting a White Background
+## Handling Transparent Backgrounds
 
-Making the "background" of the NBT structure white is straightforward and can be achieved with the existing tool.
+When providing an image with a transparent background (like a PNG), the CLI tool will automatically handle it to ensure a clean visual output in the NBT structure.
 
-In the context of a MapartCraft NBT schematic, the "background" is the layer of support blocks placed underneath the art. By default, this is cobblestone.
+### Automatic Background Flattening
 
-### How to Change the Background
+The image processing pipeline now includes a step that "flattens" the image. Here's how it works:
+*   It detects if the image has transparent pixels.
+*   Any transparent pixels are replaced with a solid **grey** color (`rgb(153, 153, 153)`).
+*   This means that if you use an image with a logo or a character on a transparent background, the background of your final map art will appear grey.
 
-You can set this to any block you want, including a white one, by using the `--supportBlock` command-line argument.
-
-**Example:**
-
-To generate a schematic with a white wool background, run the following command:
-
-```bash
-./mapart-cli.js \\
-  --image ./path/to/your/image.png \\
-  --output ./path/to/your/schematic.nbt \\
-  --supportBlock white_wool
-```
-
-### How It Works
-*   The `--supportBlock` argument overrides the default `cobblestone` value.
-*   The tool will place `minecraft:white_wool` as the support structure.
-*   If your source image has transparent areas, these will become empty space (air) in the schematic, making the white wool layer below visible. This effectively creates a solid white background.
-
-### Other White Blocks
-
-You can use any valid block NBT name. Other good options for a white background include:
-*   `white_concrete`
-*   `calcite`
-*   `diorite`
-*   `bone_block`
-*   `snow_block` 
+This process is automatic and does not require any additional command-line flags. The resulting grey color is part of the image data itself and is then converted into corresponding grey Minecraft blocks during NBT generation. 
